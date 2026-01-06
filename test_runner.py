@@ -4,11 +4,17 @@ import re
 import datetime
 import shutil
 import datetime
-import helpers
+import apphelpers
 import datetime
 import importlib
 import sys
 from collections import defaultdict
+
+
+TESTSRC_BASEDIR = "/testsrc"
+
+if TESTSRC_BASEDIR not in sys.path:
+    sys.path.insert(0, TESTSRC_BASEDIR)
 
 
 
@@ -17,7 +23,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 compile_logs_dir = os.path.join(BASE_DIR, "compile_logs")
 
+TESTSRC_HELPERDIR = "/testsrc/helpers"
+TESTSRC_BASEDIR = "/testsrc/"
+TESTSRC_TESTLISTDIR = "/testsrc/mytests"
 
+if TESTSRC_TESTLISTDIR not in sys.path:
+    sys.path.insert(0, TESTSRC_TESTLISTDIR)
+import apphelpers
 
 
 context = {
@@ -25,11 +37,9 @@ context = {
     "abort": False
 }
 
-def reload_tests():
-    helpers.clear_registries()
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    test_dir = os.path.join(base_dir, "mytests")
-    for fname in os.listdir(test_dir):
+def oldreload_tests():
+    apphelpers.clear_registries()
+    for fname in os.listdir(TESTSRC_BASEDIR):
         if fname.endswith(".py") and not fname.startswith("__"):
             modname = f"mytests.{fname[:-3]}"
             if modname in sys.modules:
@@ -37,10 +47,28 @@ def reload_tests():
             else:
                 __import__(modname)
 
+def reload_tests():
+    apphelpers.clear_registries()
+    pkg_name = "mytests"
+    try:
+        importlib.import_module(pkg_name)
+    except Exception as e:
+        print(f"Failed to import package {pkg_name}: {e}")
+
+    for fname in os.listdir(TESTSRC_TESTLISTDIR):
+        if fname.endswith(".py") and not fname.startswith("__"):
+            modname = f"{pkg_name}.{fname[:-3]}"
+            try:
+                if modname in sys.modules:
+                    importlib.reload(sys.modules[modname])
+                else:
+                    importlib.import_module(modname)
+            except Exception as e:
+                print(f"Failed to import module {modname}: {e}")
+
 
 def run_testfile(module_name):
     reload_tests() 
-
     full_module_name = f"mytests.{module_name}"
 
     try:
@@ -49,9 +77,9 @@ def run_testfile(module_name):
         print(f"Failed to import {full_module_name}: {e}")
         return []
 
-    meta = helpers.testfile_registry.get(full_module_name)
+    meta = apphelpers.testfile_registry.get(full_module_name)
     if not meta:
-        print(f"No metadata found for module '{full_module_name}' in helpers.testfile_registry")
+        print(f"No metadata found for module '{full_module_name}' in apphelpers.testfile_registry")
         return []
 
     test_types = meta.get("types", [])
@@ -59,9 +87,9 @@ def run_testfile(module_name):
     context = {"sock": None}
 
     registry_map = {
-        "build": helpers.buildtest_registry,
-        "play": helpers.playtest_registry,
-        "package": helpers.packagetest_registry,
+        "build": apphelpers.buildtest_registry,
+        "play": apphelpers.playtest_registry,
+        "package": apphelpers.packagetest_registry,
     }
 
     for t in test_types:

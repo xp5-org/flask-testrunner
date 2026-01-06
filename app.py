@@ -4,12 +4,11 @@ from flask import Flask, render_template, send_from_directory
 from bs4 import BeautifulSoup
 import test_runner
 import threading
-import helpers
 from flask import jsonify
 import importlib
 import pkgutil
-import mytests
 from collections import defaultdict
+import sys
 
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +16,13 @@ REPORT_DIR = os.path.join(BASE_DIR, "reports")
 build_REPORT_DIR = REPORT_DIR
 play_REPORT_DIR = REPORT_DIR
 
+FLASKRUNNER_HELPERDIR = "/testrunnerapp/helpers"
+TESTSRC_HELPERDIR = "/testsrc/helpers"
+TESTSRC_TESTLISTDIR = "/testsrc/mytests"
+
+if TESTSRC_TESTLISTDIR not in sys.path:
+    sys.path.insert(0, TESTSRC_TESTLISTDIR)
+import apphelpers
 
 
 @app.route('/favicon.ico')
@@ -76,8 +82,11 @@ def get_report_summaries():
 
 @app.route("/testfile_list")
 def testfile_list():
-    for _, modname, _ in pkgutil.iter_modules(mytests.__path__):
-        importlib.import_module(f"mytests.{modname}")
+    # scan for .py files in the 'mytests' dir and import them
+    #for _, modname, _ in pkgutil.iter_modules(mytests.__path__):
+    #    importlib.import_module(f"mytests.{modname}")
+    for _, modname, _ in pkgutil.iter_modules([TESTSRC_TESTLISTDIR]):
+        importlib.import_module(modname)
 
     grouped = defaultdict(lambda: {
         "types": {},
@@ -87,7 +96,7 @@ def testfile_list():
         "platform": None,
     })
 
-    for modname, meta in helpers.testfile_registry.items():
+    for modname, meta in apphelpers.testfile_registry.items():
         file = modname.split('.')[-1]
         for t in meta["types"]:
             grouped[meta["id"]]["types"][t] = file
@@ -164,9 +173,19 @@ def get_latest_report_summary():
 def index():
     if not os.path.exists(build_REPORT_DIR):
         os.makedirs(build_REPORT_DIR)
+
+    # repopulate test registry before showing the page
+    test_runner.reload_tests()
+    available_tests = list(apphelpers.testfile_registry.keys())
+
     summaries = get_report_summaries()
     latest_summary = get_latest_report_summary()
-    return render_template("index.html", summaries=summaries, latest_summary=latest_summary)
+    return render_template(
+        "index.html",
+        summaries=summaries,
+        latest_summary=latest_summary,
+        available_tests=available_tests
+    )
 
 
 @app.route("/run/<testname>")
