@@ -1,17 +1,8 @@
-import os
-import time
-import subprocess
-import socket
-import tempfile
-import threading
-from PIL import Image
-import pytesseract
-
+#from PIL import Image
+import inspect
 PROGRESS_FILE = "progress.txt"
 REPORT_DIR = "reports"
 compile_logs_dir = "compile_logs"
-
-
 
 testfile_registry = {}
 buildtest_registry = []
@@ -24,12 +15,8 @@ def clear_registries():
     packagetest_registry[:] = []
     testfile_registry.clear()
 
-
-
-
 def register_testfile(id, types, description=None, system=None, platform=None):
     def decorator(module=None):
-        import inspect
         modname = module.__name__ if module else inspect.stack()[1][0].f_globals["__name__"]
         testfile_registry[modname] = {
             "id": id,

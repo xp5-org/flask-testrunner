@@ -1,7 +1,7 @@
 import os
-import datetime
+import re
+import glob
 from flask import Flask, render_template, send_from_directory
-from bs4 import BeautifulSoup
 import test_runner
 import threading
 from flask import jsonify
@@ -9,20 +9,25 @@ import importlib
 import pkgutil
 from collections import defaultdict
 import sys
+import apphelpers
+from appstate import ProgressState
 
+#######################################
+### config stuff #####################
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
-build_REPORT_DIR = REPORT_DIR
-play_REPORT_DIR = REPORT_DIR
-
 FLASKRUNNER_HELPERDIR = "/testrunnerapp/helpers"
 TESTSRC_HELPERDIR = "/testsrc/helpers"
 TESTSRC_TESTLISTDIR = "/testsrc/mytests"
-
+progress_state = ProgressState()
+#######################################
 if TESTSRC_TESTLISTDIR not in sys.path:
     sys.path.insert(0, TESTSRC_TESTLISTDIR)
-import apphelpers
+
+
+
+
 
 
 @app.route('/favicon.ico')
@@ -30,52 +35,50 @@ def favicon():
     return app.send_static_file('favicon.ico')
 
 
-def get_report_summaries():
-    if not os.path.exists(build_REPORT_DIR):
+def get_all_report_summaries():
+    # scans reports dir, gets table tag for status on each report
+    # used to get list of most recent status of each test type founf
+    if not os.path.exists(REPORT_DIR):
         return []
 
     summaries = []
-    reports = []
-    for subdir in sorted(os.listdir(build_REPORT_DIR), reverse=True):
-        subdir_path = os.path.join(build_REPORT_DIR, subdir)
-        if os.path.isdir(subdir_path):
-            for f in os.listdir(subdir_path):
-                if f.endswith(".html"):
-                    reports.append(os.path.join(subdir, f))
+    pattern = os.path.join(REPORT_DIR, "*", "*.html")
+    reports = sorted(glob.glob(pattern), reverse=True)
 
-    for report in reports:
-        path = os.path.join(build_REPORT_DIR, report)
+    for path in reports:
+        report_name = os.path.relpath(path, REPORT_DIR)
         try:
             with open(path, "r") as f:
                 content = f.read()
-                soup = BeautifulSoup(content, "html.parser")
-                table = soup.find("table")
-                if not table:
-                    status = "UNKNOWN"
-                    duration_total = ""
-                else:
-                    status = "PASS"
-                    duration_total = 0.0
-                    for row in table.find_all("tr")[1:]:
-                        cols = row.find_all("td")
-                        if len(cols) >= 3:
-                            duration_text = cols[1].get_text(strip=True)
-                            test_status = cols[2].get_text(strip=True).upper()
 
-                            try:
-                                duration = float(duration_text.rstrip("s"))
-                                duration_total += duration
-                            except ValueError:
-                                pass
+            if "<table>" not in content.lower():
+                summaries.append((report_name, "", "UNKNOWN"))
+                continue
 
-                            if "FAIL" in test_status:
-                                status = "FAIL"
+            status = "PASS"
+            duration_total = 0.0
+            
+            rows = re.findall(r"<tr>(.*?)</tr>", content, re.DOTALL | re.IGNORECASE)
+            
+            for row in rows[1:]:
+                cols = re.findall(r"<td>(.*?)</td>", row, re.DOTALL | re.IGNORECASE)
+                if len(cols) >= 3:
+                    d_text = re.sub(r"<[^>]*>", "", cols[1]).strip().rstrip("s")
+                    s_text = re.sub(r"<[^>]*>", "", cols[2]).strip().upper()
 
-                    duration_total = f"{duration_total:.2f}s" if duration_total else ""
+                    try:
+                        duration_total += float(d_text)
+                    except ValueError:
+                        pass
 
-                summaries.append((report, duration_total, status))
+                    if "FAIL" in s_text:
+                        status = "FAIL"
+
+            duration_str = f"{duration_total:.2f}s" if duration_total > 0 else "0.00s"
+            summaries.append((report_name, duration_str, status))
+
         except Exception:
-            summaries.append((report, "", "ERROR"))
+            summaries.append((report_name, "", "ERROR"))
 
     return summaries
 
@@ -83,8 +86,6 @@ def get_report_summaries():
 @app.route("/testfile_list")
 def testfile_list():
     # scan for .py files in the 'mytests' dir and import them
-    #for _, modname, _ in pkgutil.iter_modules(mytests.__path__):
-    #    importlib.import_module(f"mytests.{modname}")
     for _, modname, _ in pkgutil.iter_modules([TESTSRC_TESTLISTDIR]):
         importlib.import_module(modname)
 
@@ -119,66 +120,58 @@ def testfile_list():
             "platform": info["platform"],
         })
 
-    print("Returning testfile list:", result)  # debug print
+    #print("Returning testfile list:", result)  # debug print
     return jsonify(result)
 
 
 def get_latest_report_summary():
-    if not os.path.exists(build_REPORT_DIR):
+    if not os.path.exists(REPORT_DIR):
         return []
-
-    all_reports = []
-    for subdir in sorted(os.listdir(build_REPORT_DIR), reverse=True):
-        subdir_path = os.path.join(build_REPORT_DIR, subdir)
-        if os.path.isdir(subdir_path):
-            for f in os.listdir(subdir_path):
-                if f.endswith(".html"):
-                    all_reports.append((subdir, f))
-
+    pattern = os.path.join(REPORT_DIR, "*", "*.html")
+    all_reports = sorted(glob.glob(pattern), reverse=True)
     if not all_reports:
         return []
+    latest_path = all_reports[0]
 
-    # sort timestamp dir
-    all_reports.sort(reverse=True)
-    latest_subdir, latest_file = all_reports[0]
-    latest_path = os.path.join(build_REPORT_DIR, latest_subdir, latest_file)
+    try:
+        with open(latest_path, "r") as f:
+            content = f.read()
 
-    with open(latest_path, "r") as f:
-        content = f.read()
+        rows = re.findall(r"<tr>(.*?)</tr>", content, re.DOTALL | re.IGNORECASE)
+        if not rows:
+            return []
 
-    soup = BeautifulSoup(content, "html.parser")
-    table = soup.find("table")
-    if not table:
+        summary = []
+        for row in rows[1:]:
+            cols = re.findall(r"<td>(.*?)</td>", row, re.DOTALL | re.IGNORECASE)
+            if len(cols) >= 3:
+                name = re.sub(r"<[^>]*>", "", cols[0]).strip()
+                dur = re.sub(r"<[^>]*>", "", cols[1]).strip()
+                stat_raw = re.sub(r"<[^>]*>", "", cols[2]).strip().upper()
+
+                if "PASS" in stat_raw:
+                    status = "PASS"
+                elif "FAIL" in stat_raw:
+                    status = "FAIL"
+                else:
+                    status = stat_raw
+                
+                summary.append((name, dur, status))
+        return summary
+    except Exception:
         return []
-
-    summary = []
-    for row in table.find_all("tr")[1:]:
-        cols = row.find_all("td")
-        if len(cols) >= 3:
-            test_name = cols[0].get_text(strip=True)
-            duration_text = cols[1].get_text(strip=True)
-            status_text = cols[2].get_text(strip=True).upper()
-
-            if "PASS" in status_text:
-                status = "PASS"
-            elif "FAIL" in status_text:
-                status = "FAIL"
-            else:
-                status = status_text
-            summary.append((test_name, duration_text, status))
-    return summary
 
 
 @app.route("/")
 def index():
-    if not os.path.exists(build_REPORT_DIR):
-        os.makedirs(build_REPORT_DIR)
+    if not os.path.exists(REPORT_DIR):
+        os.makedirs(REPORT_DIR)
 
     # repopulate test registry before showing the page
     test_runner.reload_tests()
     available_tests = list(apphelpers.testfile_registry.keys())
 
-    summaries = get_report_summaries()
+    summaries = get_all_report_summaries()
     latest_summary = get_latest_report_summary()
     return render_template(
         "index.html",
@@ -191,43 +184,35 @@ def index():
 @app.route("/run/<testname>")
 def run_named_tests(testname):
     print(f"run {testname} called")
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"report_{timestamp}.html"
-    path = os.path.join(REPORT_DIR, filename)
+
+    progress_state.step = "0/0"
+    progress_state.test_name = testname
 
     def run():
-        test_runner.run_testfile(testname)
-        with open("progress.txt", "w") as pf:
-            pf.write("Done")
+        test_runner.run_testfile(testname, progress_state)
+        progress_state.step = "Done"
+        progress_state.test_name = ""
 
-    with open("progress.txt", "w") as pf:
-        pf.write("0/0")
-
-    threading.Thread(target=run).start()
+    threading.Thread(target=run, daemon=True).start()
     return "Started"
+
+
+
 
 
 @app.route("/progress")
 def progress():
-    try:
-        with open("progress.txt", "r") as f:
-            data = f.read().strip()
-            if "|" in data:
-                step, test_name = data.split("|", 1)
-            else:
-                step, test_name = data, ""
-            return jsonify({
-                "step": step,
-                "test_name": test_name
-            })
-    except FileNotFoundError:
-        return jsonify({"step": "Done", "test_name": ""})
+    return jsonify({
+        "step": progress_state.step,
+        "test_name": progress_state.test_name
+    })
+
 
 
 @app.route("/reports/<path:filepath>")
 def view_report(filepath):
     # filepath could be "timestamp/filename.html" or "filename.html"
-    full_path = os.path.join(build_REPORT_DIR, filepath)
+    full_path = os.path.join(REPORT_DIR, filepath)
     if not os.path.isfile(full_path):
         return "File not found", 404
     directory, filename = os.path.split(full_path)

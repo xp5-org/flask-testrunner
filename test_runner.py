@@ -9,27 +9,19 @@ import datetime
 import importlib
 import sys
 from collections import defaultdict
-
-
-TESTSRC_BASEDIR = "/testsrc"
-
-if TESTSRC_BASEDIR not in sys.path:
-    sys.path.insert(0, TESTSRC_BASEDIR)
-
-
-
-PROGRESS_FILE = "progress.txt"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-REPORT_DIR = os.path.join(BASE_DIR, "reports")
-compile_logs_dir = os.path.join(BASE_DIR, "compile_logs")
+from app import progress_state
 
 TESTSRC_HELPERDIR = "/testsrc/helpers"
 TESTSRC_BASEDIR = "/testsrc/"
 TESTSRC_TESTLISTDIR = "/testsrc/mytests"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPORT_DIR = os.path.join(BASE_DIR, "reports")
+compile_logs_dir = os.path.join(BASE_DIR, "compile_logs")
 
 if TESTSRC_TESTLISTDIR not in sys.path:
     sys.path.insert(0, TESTSRC_TESTLISTDIR)
-import apphelpers
+
+
 
 
 context = {
@@ -37,15 +29,6 @@ context = {
     "abort": False
 }
 
-def oldreload_tests():
-    apphelpers.clear_registries()
-    for fname in os.listdir(TESTSRC_BASEDIR):
-        if fname.endswith(".py") and not fname.startswith("__"):
-            modname = f"mytests.{fname[:-3]}"
-            if modname in sys.modules:
-                importlib.reload(sys.modules[modname])
-            else:
-                __import__(modname)
 
 def reload_tests():
     apphelpers.clear_registries()
@@ -67,20 +50,18 @@ def reload_tests():
                 print(f"Failed to import module {modname}: {e}")
 
 
-def run_testfile(module_name):
+def run_testfile(module_name, state=None):
     reload_tests() 
     full_module_name = f"mytests.{module_name}"
 
     try:
         importlib.import_module(full_module_name)
-    except ImportError as e:
-        print(f"Failed to import {full_module_name}: {e}")
+    except ImportError:
+        if state: state.step = "Error"
         return []
 
     meta = apphelpers.testfile_registry.get(full_module_name)
-    if not meta:
-        print(f"No metadata found for module '{full_module_name}' in apphelpers.testfile_registry")
-        return []
+    if not meta: return []
 
     test_types = meta.get("types", [])
     results = []
@@ -92,27 +73,36 @@ def run_testfile(module_name):
         "package": apphelpers.packagetest_registry,
     }
 
+    all_tests = []
     for t in test_types:
         registry = registry_map.get(t)
-        if not registry:
-            print(f"No registry found for test type '{t}'")
-            continue
+        if registry:
+            matched = [f for f in registry if f.__module__ == full_module_name]
+            all_tests.extend(matched)
 
-        tests = [f for f in registry if f.__module__ == full_module_name]
-        if not tests:
-            print(f"No tests found in registry '{t}' for module '{full_module_name}'")
-            continue
+    total = len(all_tests)
 
-        test_cases = [f.test_description for f in tests]
-        results.extend(run_tests(test_cases, tests, context))
+    for i, test_func in enumerate(all_tests, 1):
+        test_desc = getattr(test_func, "test_description", test_func.__name__)
+        
+        if state:
+            state.step = f"{i}/{total}"
+            state.test_name = test_desc
 
+        # Execute one test at a time to update progress between them
+        res = run_tests([test_desc], [test_func], context)
+        results.extend(res)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     subdir_path = os.path.join(REPORT_DIR, timestamp)
-    if not os.path.exists(subdir_path):
-        os.makedirs(subdir_path, exist_ok=True)
+    os.makedirs(subdir_path, exist_ok=True)
+    
     report_path = os.path.join(subdir_path, f"{module_name}.html")
     generate_report(results, report_path)
+
+    if state:
+        state.step = "Done"
+        state.test_name = ""
 
     return results
 
@@ -147,14 +137,12 @@ def run_tests(test_descriptions, registry, context):
     results = []
     total = len(test_descriptions)
 
-    with open(PROGRESS_FILE + ".tmp", "w") as pf:
-        pf.write(f"0/{total}|Starting")
-    os.replace(PROGRESS_FILE + ".tmp", PROGRESS_FILE)
+    progress_state.step = f"0/{total}"
+    progress_state.test_name = "Starting"
 
     for index, name in enumerate(test_descriptions, start=1):
-        with open(PROGRESS_FILE + ".tmp", "w") as pf:
-            pf.write(f"{index-1}/{total}|{name}")
-        os.replace(PROGRESS_FILE + ".tmp", PROGRESS_FILE)
+        progress_state.step = f"{index-1}/{total}"
+        progress_state.test_name = name
 
         print(f"Running test {index}/{total}: {name}")
 
