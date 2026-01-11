@@ -41,11 +41,11 @@ def register_testfile(id, types, description=None, system=None, platform=None):
         return module
     return decorator
 
-def register_playtest(desc):
-    return lambda f: _add_to_registry(playtest_registry, desc, f)
+def register_test(test_type, desc):
+    if test_type not in registry_map:
+        raise ValueError(f"Unknown test type: {test_type}")
+    return lambda f: _add_to_registry(registry_map[test_type], desc, f)
 
-def register_buildtest(desc):
-    return lambda f: _add_to_registry(buildtest_registry, desc, f)
-
-def register_packagetest(desc):
-    return lambda f: _add_to_registry(packagetest_registry, desc, f)
+register_playtest = lambda desc: register_test("play", desc)
+register_buildtest = lambda desc: register_test("build", desc)
+register_packagetest = lambda desc: register_test("package", desc)

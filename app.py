@@ -30,7 +30,6 @@ def favicon():
     return app.send_static_file('favicon.ico')
 
 
-
 @app.route("/")
 def index():
     if not os.path.exists(REPORT_DIR):
@@ -51,6 +50,7 @@ def index():
 def cloneproj():
     return render_template("cloneproj.html")
 
+
 @app.route("/testfile_list")
 def testfile_list():
     test_runner.reload_tests()
@@ -58,16 +58,13 @@ def testfile_list():
     result = []
     for modname, info in apphelpers.testfile_registry.items():
         result.append({
-            "id": info["id"],       # human-readable description
-            "module": modname,      # actual Python module name
+            "id": info["id"],
+            "module": modname,
             "types": info["types"],
             "system": info.get("system"),
             "platform": info.get("platform")
         })
-
-    print("testfile_list result:", result)
     return jsonify(result)
-
 
 
 @app.route("/run/<testname>")
@@ -120,6 +117,7 @@ def clone_as_new():
         return jsonify({"status": "success", "path": f"/testsrc/src/{outputname}"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 
 

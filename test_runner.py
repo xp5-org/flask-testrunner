@@ -1,22 +1,14 @@
 import os
 import time
-import sqlite3
 import re
-import datetime
 import shutil
 import datetime
 import apphelpers
-import datetime
 import importlib
 import sys
 from collections import defaultdict
 from appstate import progress_state
-
 from app import db
-
-
-
-
 
 TESTSRC_HELPERDIR = "/testsrc/helpers"
 TESTSRC_BASEDIR = "/testsrc/"
@@ -26,8 +18,6 @@ REPORT_DIR = os.path.join(BASE_DIR, "reports")
 compile_logs_dir = os.path.join(BASE_DIR, "compile_logs")
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
 
-#if TESTSRC_TESTLISTDIR not in sys.path:
-#    sys.path.insert(0, TESTSRC_TESTLISTDIR)
 parent_dir = os.path.dirname(TESTSRC_TESTLISTDIR)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
@@ -59,7 +49,6 @@ class TestrunnerTimer:
     @classmethod
     def get_stop(cls, test_name):
         return cls.stop_times.get(test_name)
-
 
 
 
@@ -111,7 +100,7 @@ def run_registered_test(name, registry, context):
 def run_testfile(module_name, state=None):
     reload_tests()
 
-    # Determine exact module string (e.g., 'mytests.test1')
+    # get module string (e.g., 'mytests.test1')
     target_module = f"mytests.{module_name.split('.')[-1]}"
     
     meta = apphelpers.testfile_registry.get(target_module)
@@ -136,8 +125,6 @@ def run_testfile(module_name, state=None):
         registry = registry_map.get(t)
         if registry:
             for f in registry:
-                # 1. Check if the function belongs to the specific file being run
-                # 2. Check if the decorator actually added the 'test_description'
                 # If the decorator is commented out, hasattr(f, "test_description") will be False
                 is_correct_mod = (f.__module__ == mod_path)
                 desc = getattr(f, "test_description", None)
@@ -156,7 +143,6 @@ def run_testfile(module_name, state=None):
     context = {"sock": None, "abort": False}
     results = run_tests(test_descriptions, all_tests, context)
 
-    # Calculate TOTAL duration for the whole suite
     total_suite_duration = sum(r[5] for r in results)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -166,7 +152,6 @@ def run_testfile(module_name, state=None):
     report_path = os.path.join(subdir_path, f"{module_name}.html")
     generate_report(results, report_path)
     
-    # Updated to pass the calculated total duration
     db.populate_sqlite(results, report_path, total_suite_duration)
 
     if state:
@@ -354,5 +339,3 @@ def movethefiles(results):
             if m:
                 step_num = int(m.group(1))
                 screenshot_map[step_num].append(fname)
-
-

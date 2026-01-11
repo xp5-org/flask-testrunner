@@ -15,7 +15,6 @@ DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
 #######################################
 
 class ReportDB:
-    DB_PATH = "/testrunnerapp/db.sqlite"
     def __init__(self):
         self.DB_PATH = DB_PATH
         db_dir = os.path.dirname(DB_PATH)
@@ -23,8 +22,10 @@ class ReportDB:
             os.makedirs(db_dir, exist_ok=True)
         self._init_db()
 
+
     def _connect(self):
         return sqlite3.connect(self.DB_PATH)
+
 
     def _init_db(self):
         conn = self._connect()
@@ -180,5 +181,3 @@ class ReportDB:
 
         conn.commit()
         conn.close()
-
-
