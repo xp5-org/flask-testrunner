@@ -1,0 +1,78 @@
+<!doctype html>
+
+<html>
+<head>
+    <title>Clone Build Test</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        label { display: block; margin-top: 12px; }
+        select, input { width: 400px; padding: 6px; }
+        button { margin-top: 16px; padding: 8px 16px; }
+        #status { margin-top: 12px; }
+    </style>
+</head>
+<body>
+    <h2>Clone Build Test</h2>
+
+```
+<label>Source build test</label>
+<select id="testlist"></select>
+
+<label>New project name (path)</label>
+<input type="text" id="outputname" placeholder="new_project_name">
+
+<button onclick="cloneProject()">Clone</button>
+
+<div id="status"></div>
+
+<script>
+    function loadTests() {
+        fetch('/testfile_list')
+            .then(r => r.json())
+            .then(data => {
+                const sel = document.getElementById('testlist')
+                sel.innerHTML = ''
+data.forEach(item => {
+    if (item.types && item.types.build) {
+        const opt = document.createElement('option')
+        opt.value = item.module       // backend needs module name
+        opt.textContent = item.id     // user sees description
+        sel.appendChild(opt)
+    }
+})
+
+            })
+    }
+
+    function cloneProject() {
+        const testname = document.getElementById('testlist').value
+        const outputname = document.getElementById('outputname').value.trim()
+        const status = document.getElementById('status')
+
+        if (!testname || !outputname) {
+            status.textContent = 'test name and output name required'
+            return
+        }
+
+        status.textContent = 'cloning...'
+
+        fetch(`/clone_as_new?testname=${encodeURIComponent(testname)}&outputname=${encodeURIComponent(outputname)}`)
+            .then(r => r.json())
+            .then(res => {
+                if (res.status === 'success') {
+                    status.textContent = 'created at ' + res.path
+                } else {
+                    status.textContent = 'error: ' + res.message
+                }
+            })
+            .catch(e => {
+                status.textContent = 'error: ' + e
+            })
+    }
+
+    loadTests()
+</script>
+```
+
+</body>
+</html>

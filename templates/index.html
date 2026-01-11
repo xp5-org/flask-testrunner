@@ -16,7 +16,7 @@
         }
 
         tr:nth-child(odd) {
-            background-color: #e0e0e0;  /* 25% gray */
+            background-color: #e0e0e0;
         }
 
         th:nth-child(1), td:nth-child(1) { width: 25%; }
@@ -27,21 +27,6 @@
         .green { background-color: #c8f7c5; }
         .red { background-color: #f7c5c5; }
         .gray { background-color: #eeeeee; }
-
-        ul {
-            list-style-type: none;
-            padding-left: 0;
-            margin: 0;
-            line-height: 1;
-            font-size: 14px;
-        }
-
-        li {
-            margin: 0;
-            padding: 0;
-            line-height: 1;
-            display: block;
-        }
 
         a {
             display: inline-block;
@@ -92,90 +77,81 @@
     </table>
 
     <script>
-    document.addEventListener("DOMContentLoaded", function() {
-        let polling = false;
-        let pollTimeout;
+   document.addEventListener("DOMContentLoaded", async () => {
+    const status = document.getElementById("progress-status");
+    let polling = false;
+    let hasStartedRunning = false; // Guard to prevent reload loops
 
-function pollProgress() {
-    fetch("/progress")
-        .then(response => response.json())
-        .then(data => {
-            const status = document.getElementById("progress-status");
+    const poll = async () => {
+        try {
+            const res = await fetch("/progress");
+            const data = await res.json();
+            
             if (data.step === "Done") {
                 status.textContent = "Progress: Complete";
+                // Only reload if this script instance actually saw a test running
+                if (hasStartedRunning) {
+                    polling = false;
+                    setTimeout(() => location.reload(), 1000); 
+                    return;
+                }
                 polling = false;
-                clearTimeout(pollTimeout);
-                location.reload();
-            } else {
-                status.textContent = `Progress: ${data.step} - ${data.test_name}`;
-                pollTimeout = setTimeout(pollProgress, 3000);
+                return;
             }
-        })
-        .catch(() => {
-            pollTimeout = setTimeout(pollProgress, 3000);
-        });
-}
+            
+            if (data.step !== "Idle") {
+                polling = true;
+                hasStartedRunning = true; // Mark that we are officially tracking a run
+                status.textContent = `Progress: ${data.step} - ${data.test_name}`;
+                setTimeout(poll, 3000);
+            } else {
+                polling = false;
+                status.textContent = "Progress: Idle";
+            }
+        } catch (e) {
+            setTimeout(poll, 3000);
+        }
+    };
 
-
-        fetch("/testfile_list")
-            .then(res => res.json())
-            .then(testfiles => {
-                const container = document.getElementById("testfile-container");
-                const platforms = {};
-
-                testfiles.forEach(test => {
-                    const platform = test.platform || "Unknown";
-                    if (!platforms[platform]) platforms[platform] = [];
-                    platforms[platform].push(test);
-                });
-
-                Object.entries(platforms).forEach(([platform, tests]) => {
-                    const title = document.createElement("h3");
-                    title.textContent = platform;
-                    container.appendChild(title);
-
-                    const table = document.createElement("table");
-                    const header = table.insertRow();
-                    ["ID", "System", "Run"].forEach(text => {
-                        const th = document.createElement("th");
-                        th.textContent = text;
-                        header.appendChild(th);
-                    });
-
-                    tests.forEach(test => {
-                        const row = table.insertRow();
-                        row.insertCell().textContent = test.id || "";
-                        row.insertCell().textContent = test.system || "";
-
-                        const btnCell = row.insertCell();
-                        for (const [type, filename] of Object.entries(test.types)) {
-                            const btn = document.createElement("button");
-                            btn.textContent = type;
-                            btn.addEventListener("click", () => {
-                                if (polling) return;
-                                polling = true;
-                                document.getElementById("progress-status").textContent =
-                                    `Progress: Starting ${test.id} (${type})...`;
-                                fetch(`/run/${filename}`)
-                                    .then(response => {
-                                        if (!response.ok) throw new Error("Failed to start test");
-                                        pollProgress();
-                                    })
-                                    .catch(err => {
-                                        polling = false;
-                                        document.getElementById("progress-status").textContent =
-                                            `Error starting ${test.id} (${type})`;
-                                        console.error(err);
-                                    });
-                            });
-                            btnCell.appendChild(btn);
-                        }
-                    });
-
-                    container.appendChild(table);
-                });
+    window.startTest = (file, id, type) => {
+        if (polling) return;
+        polling = true;
+        hasStartedRunning = true; 
+        status.textContent = `Progress: Starting ${id} (${type})...`;
+        
+        fetch(`/run/${file}`)
+            .then(r => r.ok ? poll() : (polling = false))
+            .catch(() => {
+                polling = false;
+                status.textContent = "Error: Could not reach server.";
             });
-    });
+    };
+
+    // 1. Initial poll
+    poll();
+
+    // 2. Load Table (using your existing container)
+    const testRes = await fetch("/testfile_list");
+    const testfiles = await testRes.json();
+    const container = document.getElementById("testfile-container");
+    
+    const platforms = testfiles.reduce((acc, t) => {
+        const p = t.platform || "Unknown";
+        (acc[p] = acc[p] || []).push(t);
+        return acc;
+    }, {});
+
+    for (const [platform, tests] of Object.entries(platforms)) {
+        let html = `<h3>${platform}</h3><table><tr><th>ID</th><th>System</th><th>Run</th></tr>`;
+        tests.forEach(test => {
+            const buttons = Object.entries(test.types).map(([type, file]) => `
+                <button onclick="startTest('${file}', '${test.id}', '${type}')">${type}</button>
+            `).join("");
+            html += `<tr><td>${test.id}</td><td>${test.system}</td><td>${buttons}</td></tr>`;
+        });
+        container.insertAdjacentHTML('beforeend', html + '</table>');
+    }
+});
     </script>
 </body>
 </html>

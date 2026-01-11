@@ -3,5 +3,4 @@ class ProgressState:
         self.step = "Idle"
         self.test_name = ""
 
-# Single instance shared by everyone
-state = ProgressState()
+progress_state = ProgressState()

@@ -1,5 +1,5 @@
-#from PIL import Image
-import inspect
+
+
 PROGRESS_FILE = "progress.txt"
 REPORT_DIR = "reports"
 compile_logs_dir = "compile_logs"
@@ -9,42 +9,43 @@ buildtest_registry = []
 playtest_registry = []
 packagetest_registry = []
 
+registry_map = {
+    "build": buildtest_registry,
+    "play": playtest_registry,
+    "package": packagetest_registry,
+}
+
 def clear_registries():
-    buildtest_registry[:] = []
-    playtest_registry[:] = []
-    packagetest_registry[:] = []
+    for r in registry_map.values():
+        r[:] = []
     testfile_registry.clear()
 
+def _add_to_registry(registry, description, func):
+    func.test_description = description
+    if func not in registry:
+        registry.append(func)
+    return func
+
 def register_testfile(id, types, description=None, system=None, platform=None):
-    def decorator(module=None):
-        modname = module.__name__ if module else inspect.stack()[1][0].f_globals["__name__"]
+    def decorator(module):
+        modname = module.__name__
+        types_dict = {t: modname for t in types} if isinstance(types, list) else types
+        
         testfile_registry[modname] = {
             "id": id,
-            "types": types,
+            "types": types_dict,
             "description": description,
             "system": system,
             "platform": platform,
         }
-        return module  # <-- must return module to preserve normal import behavior
+        return module
     return decorator
 
-def register_playtest(description):
-    def decorator(func):
-        func.test_description = description
-        playtest_registry.append(func)
-        return func
-    return decorator
+def register_playtest(desc):
+    return lambda f: _add_to_registry(playtest_registry, desc, f)
 
-def register_buildtest(description):
-    def decorator(func):
-        func.test_description = description
-        buildtest_registry.append(func)
-        return func
-    return decorator
+def register_buildtest(desc):
+    return lambda f: _add_to_registry(buildtest_registry, desc, f)
 
-def register_packagetest(description):
-    def decorator(func):
-        func.test_description = description
-        packagetest_registry.append(func)
-        return func
-    return decorator
+def register_packagetest(desc):
+    return lambda f: _add_to_registry(packagetest_registry, desc, f)
