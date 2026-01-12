@@ -1,5 +1,7 @@
 import os, shutil
 import re
+import importlib
+import os
 
 
 
@@ -9,42 +11,44 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 FLASKRUNNER_HELPERDIR = "/testrunnerapp/helpers"
 TESTSRC_HELPERDIR = "/testsrc/helpers"
-TESTSRC_TESTLISTDIR = "/testsrc/mytests"
+TESTSRC_TESTLISTDIR = "/testsrc/sourcedir/projecta/__testlist__mytestlist.py"
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
 #######################################
 
 
 
 def newprojdir(outputname):
-    full_path = os.path.join("/testsrc/src", outputname)
+    full_path = os.path.join("/testsrc/sourcedir", outputname)
     if not os.path.exists(full_path):
         os.makedirs(full_path)
     return full_path
 
 
 def copybuildtest(testname, outputname):
-    # Strip package prefix if present
     if '.' in testname:
-        testname = testname.split('.')[-1]
+        module_name = testname
+    else:
+        raise ValueError("testname must be a full module name")
 
-    if not testname.endswith(".py"):
-        testname += ".py"
+    mod = importlib.import_module(module_name)
+    source_file = mod.__file__
+    dest_dir = os.path.join("/testsrc/sourcedir", outputname)
 
-    source_file = os.path.join(TESTSRC_TESTLISTDIR, testname)
-    new_file = os.path.join(TESTSRC_TESTLISTDIR, outputname + ".py")
-    dest_dir = os.path.join("/testsrc/src", outputname)
-
-    # Copy the source .py to new .py in mytests
-    if not os.path.exists(source_file):
-        raise FileNotFoundError(f"Source {source_file} not found")
-    shutil.copy2(source_file, new_file)
-
-    # edit the py file with the new name id
-    update_register_metadata(new_file, outputname)
-
-    # Create the output directory in /testsrc/src
     if not os.path.exists(dest_dir):
         os.makedirs(dest_dir)
+
+    new_file = os.path.join(dest_dir, f"__testlist__{outputname}.py")
+
+
+    if not os.path.exists(source_file):
+        raise FileNotFoundError(f"Source {source_file} not found")
+
+    shutil.copy2(source_file, new_file)
+    update_register_metadata(new_file, outputname)
+
+    print(f"Created at {dest_dir}")
+
+
 
 
 def update_register_metadata(pyfile_path, new_id=None, new_platform=None):
