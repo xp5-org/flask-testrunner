@@ -10,7 +10,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 FLASKRUNNER_HELPERDIR = "/testrunnerapp/helpers"
 TESTSRC_HELPERDIR = "/testsrc/helpers"
-TESTSRC_TESTLISTDIR = "/testsrc/mytests"
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
 #######################################
 

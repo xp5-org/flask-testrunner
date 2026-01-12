@@ -1,26 +1,26 @@
 import os
+import sys
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.pycache_prefix = os.path.join(BASE_DIR, "pycache")
+
+
 import time
 import re
 import shutil
 import datetime
 import apphelpers
+import glob
 import importlib
-import sys
 from collections import defaultdict
 from appstate import progress_state
 from app import db
 
 TESTSRC_HELPERDIR = "/testsrc/helpers"
 TESTSRC_BASEDIR = "/testsrc/"
-#TESTSRC_TESTLISTDIR = "/testsrc/mytests"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 compile_logs_dir = os.path.join(BASE_DIR, "compile_logs")
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
-
-#parent_dir = os.path.dirname(TESTSRC_TESTLISTDIR)
-#if parent_dir not in sys.path:
-#    sys.path.insert(0, parent_dir)
 
 
 
@@ -36,6 +36,9 @@ context = {
     "sock": None,
     "abort": False
 }
+
+TESTLIST_PREFIXES = ("__testlist__")
+
 
 
 
@@ -61,7 +64,16 @@ class TestrunnerTimer:
 
 
 
-TESTLIST_PREFIXES = ("__testlist__")
+
+def _load_or_reload(modname):
+    try:
+        if modname in sys.modules:
+            importlib.reload(sys.modules[modname])
+        else:
+            importlib.import_module(modname)
+    except Exception as e:
+        print(f"Failed to load {modname}: {e}")
+
 
 def reload_tests():
     apphelpers.clear_registries()
@@ -74,31 +86,22 @@ def reload_tests():
         if not os.path.isdir(project_path):
             continue
 
-        try:
-            importlib.import_module(project)
-            print("importing project module: ", project)
-        except Exception as e:
-            print(f"Failed to import package {project}: {e}")
-            continue
+        _load_or_reload(project)
 
-        for fname in os.listdir(project_path):
-            if not fname.endswith(".py"):
-                continue
-            if not fname.startswith(TESTLIST_PREFIXES):
-                continue
+        patterns = [
+            os.path.join(project_path, "*.py"),
+            os.path.join(project_path, "*", "*.py")
+        ]
 
-            modname = f"{project}.{fname[:-3]}"
+        for pattern in patterns:
+            for fpath in glob.glob(pattern):
+                fname = os.path.basename(fpath)
+                if not fname.startswith(TESTLIST_PREFIXES):
+                    continue
 
-            try:
-                if modname in sys.modules:
-                    importlib.reload(sys.modules[modname])
-                else:
-                    importlib.import_module(modname)
-            except Exception as e:
-                print(f"Failed to load {modname}: {e}")
-
-
-
+                rel_path = os.path.relpath(fpath, TESTSRC_ROOT)
+                modname = rel_path.replace(os.sep, ".")[:-3]
+                _load_or_reload(modname)
 
 
 def run_registered_test(name, registry, context):
@@ -130,9 +133,6 @@ def run_registered_test(name, registry, context):
 
 def run_testfile(module_name, state=None):
     reload_tests()
-
-    # get module string (e.g., 'mytests.test1')
-    #target_module = f"mytests.{module_name.split('.')[-1]}"
     target_module = module_name
     
     meta = apphelpers.testfile_registry.get(target_module)

@@ -103,7 +103,7 @@ def view_report(filepath):
 
 @app.route("/clone_as_new")
 def clone_as_new():
-    from newprojecthelper import copybuildtest, newprojdir
+    from newprojecthelper import copybuildtest
     
     testname = request.args.get('testname')
     outputname = request.args.get('outputname')
@@ -112,7 +112,6 @@ def clone_as_new():
         return jsonify({"status": "error", "message": "testname and outputname required"}), 400
 
     try:
-        newprojdir(outputname)
         copybuildtest(testname, outputname)
         return jsonify({"status": "success", "path": f"/testsrc/src/{outputname}"}), 200
     except Exception as e:
