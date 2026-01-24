@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test Details - {{ testname }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { margin-bottom: 10px; }
+        .info { margin-bottom: 20px; }
+        .info div { margin: 5px 0; }
+        button { padding: 8px 16px; font-size: 14px; cursor: pointer; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { background-color: #f0f0f0; }
+        .green { background-color: #c8f7c5; }
+        .red { background-color: #f7c5c5; }
+        .gray { background-color: #eeeeee; }
+        a { text-decoration: none; color: #007BFF; }
+        a:hover { text-decoration: underline; }
+    </style>
+<script>
+function runTest(internalName) {
+    const status = document.getElementById("progress-status");
+    let polling = true;
+    let hasStartedRunning = true;
+
+    status.textContent = `Progress: Starting ${internalName}...`;
+
+    fetch(`/run/${internalName}`)
+        .then(r => {
+            if (!r.ok) throw new Error("Failed to start test");
+            poll(); // start polling immediately
+        })
+        .catch(() => {
+            polling = false;
+            status.textContent = "Error: Could not start test.";
+        });
+
+    async function poll() {
+        if (!polling) return;
+
+        try {
+            const res = await fetch("/progress");
+            const data = await res.json();
+
+            if (data.step === "Done") {
+                status.textContent = "Progress: Complete";
+                polling = false;
+                setTimeout(() => location.reload(), 1000);
+                return;
+            }
+
+            if (data.step !== "Idle") {
+                status.textContent = `Progress: ${data.step} - ${data.test_name}`;
+                setTimeout(poll, 3000);
+            } else {
+                status.textContent = "Progress: Idle";
+                setTimeout(poll, 3000);
+            }
+        } catch (e) {
+            setTimeout(poll, 3000);
+        }
+    }
+}
+</script>
+
+
+</head>
+
+<body>
+
+
+
+<h1>Test Details: {{ testname }}</h1>
+<p id="progress-status">Progress: Idle</p>
+
+<div class="info">
+    <div><strong>ID:</strong> {{ test_info.get('id', 'N/A') }}</div>
+    <div><strong>System:</strong> {{ test_info.get('system', 'N/A') }}</div>
+    <div><strong>Platform:</strong> {{ test_info.get('platform', 'N/A') }}</div>
+</div>
+
+
+
+
+{% if test_info.get('types') %}
+    {% for type, internal in test_info.types.items() %}
+        <button onclick="runTest('{{ internal }}')">Run {{ type }}</button>
+    {% endfor %}
+{% else %}
+    <p>No runnable types found for this test.</p>
+{% endif %}
+{% if latest_summary %}
+<h2>Most Recent Test Steps</h2>
+
+{% if failure_logs %}
+    <h3>Recent Non-Passing Steps</h3>
+    <div class="failure-log-list">
+        {% for log in failure_logs %}
+            <div class="log-item" style="border-left: 4px solid red; padding-left: 10px; margin-bottom: 15px;">
+                <strong>Step:</strong> {{ log.name }}
+                <pre style="background: #1e1e1e; color: #d4d4d4; padding: 10px; overflow-x: auto;">{{ log.output }}</pre>
+            </div>
+        {% endfor %}
+    </div>
+{% endif %}
+<table>
+    <thead>
+        <tr>
+            <th>Step</th>
+            <th>Duration</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for step_name, duration, status in latest_summary %}
+        <tr>
+            <td>{{ step_name }}</td>
+            <td>{{ duration }}</td>
+            <td class="{{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else 'gray') }}">{{ status }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No recent test steps available.</p>
+{% endif %}
+<h2>Reports</h2>
+{% if reports %}
+<table>
+    <thead>
+        <tr>
+            <th>Timestamp</th>
+            <th>Report File</th>
+            <th>Duration</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for report in reports %}
+        <tr>
+            <td>{{ report.timestamp }}</td>
+            <td><a href="/reports/{{ report.filepath }}" target="_blank">{{ report.filename }}</a></td>
+            <td>{{ report.duration }}</td>
+            <td class="{{ 'green' if report.status == 'PASS' else ('red' if report.status == 'FAIL' else 'gray') }}">{{ report.status }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% else %}
+<p>No reports found for this test.</p>
+{% endif %}
+
+</body>
+</html>

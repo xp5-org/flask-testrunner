@@ -38,6 +38,7 @@ def index():
     db = ReportDB()
     summaries = db.get_all_reports_summary()
     latest_summary = db.get_latest_report_summary()
+    print("DEBUGL LATEST SUMMARY: ", latest_summary)
 
     return render_template(
         "index.html",
@@ -51,6 +52,7 @@ def cloneproj():
     return render_template("cloneproj.html")
 
 
+
 @app.route("/testfile_list")
 def testfile_list():
     test_runner.reload_tests()
@@ -58,7 +60,8 @@ def testfile_list():
     result = []
     for modname, info in apphelpers.testfile_registry.items():
         result.append({
-            "id": info["id"],
+            "id": info["id"].replace(" ", "_"),  # internal ID, underscores only
+            "display_name": info["id"],          # human-readable
             "module": modname,
             "types": info["types"],
             "system": info.get("system"),
@@ -67,9 +70,17 @@ def testfile_list():
     return jsonify(result)
 
 
+@app.route('/test-logs/<test_id>')
+def view_test_logs(test_id):
+    db = ReportDB()
+    failed_logs = db.get_failed_steps_log(test_id)
+    return render_template('logs.html', logs=failed_logs, test_id=test_id)
+
+
+
 @app.route("/run/<testname>")
 def run_named_tests(testname):
-    print(f"run {testname} called")
+    # print(f"run {testname} called") - testname is the reg key
 
     progress_state.step = "0/0"
     progress_state.test_name = testname
@@ -81,6 +92,7 @@ def run_named_tests(testname):
 
     threading.Thread(target=run, daemon=True).start()
     return "Started"
+
 
 
 @app.route("/progress")
@@ -116,6 +128,83 @@ def clone_as_new():
         return jsonify({"status": "success", "path": f"/testsrc/src/{outputname}"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+    
+
+
+
+@app.route("/test/<test_id>")
+def test_details(test_id):
+    test_runner.reload_tests()
+
+    test_info = next(
+        (
+            info for info in apphelpers.testfile_registry.values()
+            if info.get("id", "").replace(" ", "_") == test_id
+        ),
+        {}
+    )
+
+    internal_id = None
+    if test_info.get('types'):
+        internal_id = next(iter(test_info['types'].values()))
+
+    all_summaries = db.get_all_reports_summary()
+    print("allsumarydebug: ", all_summaries)
+    reports = [
+        {
+            "filename": os.path.basename(r[0]),
+            "filepath": r[0],
+            "duration": r[1],
+            "status": r[2],
+            "timestamp": r[3]
+        }
+        for r in all_summaries
+        if internal_id and internal_id in os.path.basename(r[0])
+    ]
+
+    latest = db.get_latest_report_summary()
+    latest_summary = []
+    for r in latest:
+        filepath, duration, status = r
+        step_name = os.path.basename(filepath)
+        latest_summary.append((step_name, duration, status))
+
+
+    failure_logs = []
+    if internal_id:
+        failure_logs = db.get_failed_steps_log(internal_id)
+
+    # example log to test js/html template
+    # failure_logs = [
+    #         {
+    #             "name": "STEP_FAILURE",
+    #             "output": "Error: Test error message"
+    #         },
+    #         {
+    #             "name": "TIMEOUT_WARN",
+    #             "output": "Warning: Test warning messsage"
+    #         } ]
+    # print("failurelogsdb: ", failure_logs)
+
+    reports.sort(key=lambda r: r["timestamp"], reverse=True)
+    reports = reports[:5]
+    
+    return render_template(
+        "test_detail.html",
+        testname=test_id,
+        test_info=test_info,
+        reports=reports,
+        internal_id=internal_id,
+        latest_summary=latest_summary,
+        failure_logs=failure_logs
+    )
+
+
+
+
+
+
+
 
 
 

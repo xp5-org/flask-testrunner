@@ -126,9 +126,9 @@ def run_registered_test(name, registry, context):
                 log_output = str(e)
                 stdout_output = ""
                 color = "gray"
-                duration = 0.0
+                duration = 0.00
             return (name, status, color, log_output, stdout_output, duration)
-    return (name, "NOT FOUND", "gray", "No matching test found", "", 0.0)
+    return (name, "NOT FOUND", "gray", "No matching test found", "", 0.00)
 
 
 def run_testfile(module_name, state=None):
@@ -157,7 +157,7 @@ def run_testfile(module_name, state=None):
         registry = registry_map.get(t)
         if registry:
             for f in registry:
-                # If the decorator is commented out, hasattr(f, "test_description") will be False
+                # check if test decorator is commented out and ignore test step if found
                 is_correct_mod = (f.__module__ == mod_path)
                 desc = getattr(f, "test_description", None)
 
@@ -175,22 +175,42 @@ def run_testfile(module_name, state=None):
     context = {"sock": None, "abort": False}
     results = run_tests(test_descriptions, all_tests, context)
 
-    total_suite_duration = sum(r[5] for r in results)
+    def get_start(name):
+        ts = TestrunnerTimer.get_start(name)
+        return ts if ts is not None else time.time()
 
+    def get_stop(name):
+        ts = TestrunnerTimer.get_stop(name)
+        if ts is not None:
+            return ts
+        dur = next((d for n, s, c, o, out, d in results if n == name), 0.0)
+        return get_start(name) + dur
+
+    total_suite_duration = round(sum(r[5] for r in results), 2)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     subdir_path = os.path.join(REPORT_DIR, timestamp)
     os.makedirs(subdir_path, exist_ok=True)
 
     report_path = os.path.join(subdir_path, f"{module_name}.html")
-    generate_report(results, report_path)
-    
-    db.populate_sqlite(results, report_path, total_suite_duration)
+    generate_report(results, report_path, testlist_name=module_name)
 
+    db.populate_sqlite(
+        test_id=module_name,
+        results=[(n, s, c, o, out, d) for n, s, c, o, out, d in results],
+        html_report_path=report_path,
+        total_duration=total_suite_duration,
+        get_start=get_start,
+        get_stop=get_stop
+    )
     if state:
         state.step = "Done"
         state.test_name = ""
 
     return results
+
+
+
+
 
 
 def run_tests(test_descriptions, registry, context):
@@ -218,7 +238,7 @@ def run_tests(test_descriptions, registry, context):
         progress_state.test_name = test_name
 
         if context.get("abort"):
-            results.append((test_name, "SKIPPED", "gray", "Skipped", "", 0.0))
+            results.append((test_name, "SKIPPED", "gray", "Skipped", "", 0.00))
             continue
 
         result = run_registered_test(test_name, [test_func], context)
@@ -230,7 +250,9 @@ def run_tests(test_descriptions, registry, context):
     return results
 
 
-def generate_report(results, report_path):
+
+
+def generate_report(results, report_path, testlist_name=""):
     subdir_path = os.path.dirname(report_path)
     print(f"Creating directory: '{subdir_path}'")
     if subdir_path and not os.path.exists(subdir_path):
@@ -260,55 +282,56 @@ def generate_report(results, report_path):
 
     # Write HTML report
     with open(report_path, "w") as f:
-        f.write("""<html>
-    <head>
-    <title>Test Report</title>
-    <style>
-    body { font-family: sans-serif; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-    .green { background-color: #c8f7c5; }
-    .red { background-color: #f7c5c5; }
-    .gray { background-color: #eeeeee; }
+        f.write(f"""<html>
+        <head>
+        <title>Test Report - {testlist_name}</title>
+        <style>
+        body {{ font-family: sans-serif; }}
+        table {{ border-collapse: collapse; width: 100%; }}
+        th, td {{ border: 1px solid #ccc; padding: 8px; text-align: left; }}
+        .green {{ background-color: #c8f7c5; }}
+        .red {{ background-color: #f7c5c5; }}
+        .gray {{ background-color: #eeeeee; }}
 
-    .flex-container {
-        display: flex;
-        gap: 20px;
-        flex-wrap: nowrap;
-        max-width: 100%;
-    }
+        .flex-container {{
+            display: flex;
+            gap: 20px;
+            flex-wrap: nowrap;
+            max-width: 100%;
+        }}
 
-    .output-column {
-        flex: 1;
-        min-width: 0;
-        max-width: 50%;
-        overflow: hidden;
-        background-color: #f0f0f0;
-        padding: 10px;
-    }
+        .output-column {{
+            flex: 1;
+            min-width: 0;
+            max-width: 50%;
+            overflow: hidden;
+            background-color: #f0f0f0;
+            padding: 10px;
+        }}
 
-    .image-column {
-        flex: 1;
-        max-width: 50%;
-    }
+        .image-column {{
+            flex: 1;
+            max-width: 50%;
+        }}
 
-    pre {
-        background-color: #eee;
-        padding: 10px;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
-        max-width: 100%;
-        overflow-x: auto;
-    }
-    hr { margin: 40px 0; }
-    </style>
-    </head>
-    <body>
-    <h1>Test Report</h1>
-    <table>
-    <tr><th>Test Name</th><th>Duration (s)</th><th>Result</th></tr>
-    """)
+        pre {{
+            background-color: #eee;
+            padding: 10px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            max-width: 100%;
+            overflow-x: auto;
+        }}
+        hr {{ margin: 40px 0; }}
+        </style>
+        </head>
+        <body>
+        <h1>Test Report: {testlist_name}</h1>
+        <table>
+        <tr><th>Test Name</th><th>Duration (s)</th><th>Result</th></tr>
+        """)
+
 
         # Summary table
         for name, status, color, _, _, duration in results:

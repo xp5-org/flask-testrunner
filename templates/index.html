@@ -41,8 +41,15 @@
 <body>
     <p id="progress-status">Progress: Idle</p>
 
+    <select id="system-filter">
+    <option value="all">All</option>
+</select>
+
+
     <h2>Available Tests</h2>
     <div id="testfile-container"></div>
+    <h3>Filter by System</h3>
+
 
     <br><br>
 
@@ -64,44 +71,46 @@
 
     <br><br>
 
+    
     <h2>Summaries</h2>
     <table>
         <tr><th>Report</th><th>Duration</th><th>Status</th></tr>
-        {% for report, duration, status in summaries %}
-            <tr>
-                <td><a href="{{ url_for('view_report', filepath=report) }}">{{ report }}</a></td>
-                <td>{{ duration }}</td>
-                <td class="{{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else 'gray') }}">{{ status }}</td>
-            </tr>
-        {% endfor %}
+{% for report, duration, status, timestamp in summaries %}
+<tr>
+    <td><a href="{{ url_for('view_report', filepath=report) }}">{{ report }}</a></td>
+    <td>{{ duration }}</td>
+    <td class="{{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else 'gray') }}">{{ status }}</td>
+    <td>{{ timestamp }}</td>
+</tr>
+{% endfor %}
+
     </table>
 
-    <script>
-   document.addEventListener("DOMContentLoaded", async () => {
+<script>
+document.addEventListener("DOMContentLoaded", async () => {
     const status = document.getElementById("progress-status");
     let polling = false;
-    let hasStartedRunning = false; // Guard to prevent reload loops
+    let hasStartedRunning = false;
 
     const poll = async () => {
         try {
             const res = await fetch("/progress");
             const data = await res.json();
-            
+
             if (data.step === "Done") {
                 status.textContent = "Progress: Complete";
-                // Only reload if this script instance actually saw a test running
                 if (hasStartedRunning) {
                     polling = false;
-                    setTimeout(() => location.reload(), 1000); 
+                    setTimeout(() => location.reload(), 1000);
                     return;
                 }
                 polling = false;
                 return;
             }
-            
+
             if (data.step !== "Idle") {
                 polling = true;
-                hasStartedRunning = true; // Mark that we are officially tracking a run
+                hasStartedRunning = true;
                 status.textContent = `Progress: ${data.step} - ${data.test_name}`;
                 setTimeout(poll, 3000);
             } else {
@@ -116,9 +125,9 @@
     window.startTest = (file, id, type) => {
         if (polling) return;
         polling = true;
-        hasStartedRunning = true; 
+        hasStartedRunning = true;
         status.textContent = `Progress: Starting ${id} (${type})...`;
-        
+
         fetch(`/run/${file}`)
             .then(r => r.ok ? poll() : (polling = false))
             .catch(() => {
@@ -127,31 +136,63 @@
             });
     };
 
-    // 1. Initial poll
     poll();
 
-    // 2. Load Table (using your existing container)
     const testRes = await fetch("/testfile_list");
     const testfiles = await testRes.json();
     const container = document.getElementById("testfile-container");
-    
+
     const platforms = testfiles.reduce((acc, t) => {
         const p = t.platform || "Unknown";
         (acc[p] = acc[p] || []).push(t);
         return acc;
     }, {});
 
+    const systemSet = new Set();
+
     for (const [platform, tests] of Object.entries(platforms)) {
-        let html = `<h3>${platform}</h3><table><tr><th>ID</th><th>System</th><th>Run</th></tr>`;
+        let html = `<h3>${platform}</h3><table class="test-table"><tr><th>ID</th><th>System</th><th>Run</th></tr>`;
         tests.forEach(test => {
-            const buttons = Object.entries(test.types).map(([type, file]) => `
-                <button onclick="startTest('${file}', '${test.id}', '${type}')">${type}</button>
-            `).join("");
-            html += `<tr><td>${test.id}</td><td>${test.system}</td><td>${buttons}</td></tr>`;
+            systemSet.add(test.system);
+            const buttons = Object.entries(test.types).map(([type, file]) =>
+                `<button onclick="startTest('${file}', '${test.display_name}', '${type}')">${type}</button>`
+            ).join("");
+
+            html += `<tr>
+                        <td><span class="test-link" data-testid="${test.id}">${test.display_name}</span></td>
+                        <td class="system-col">${test.system}</td>
+                        <td>${buttons}</td>
+                     </tr>`;
         });
-        container.insertAdjacentHTML('beforeend', html + '</table>');
+        container.insertAdjacentHTML("beforeend", html + "</table>");
     }
+
+    const systemFilter = document.getElementById("system-filter");
+    Array.from(systemSet).sort().forEach(sys => {
+        systemFilter.insertAdjacentHTML("beforeend", `<option value="${sys}">${sys}</option>`);
+    });
+
+systemFilter.addEventListener("change", () => {
+    const value = systemFilter.value;
+    document.querySelectorAll(".test-table").forEach(table => {
+        const rows = table.querySelectorAll("tr");
+        rows.forEach((row, i) => {
+            if (i === 0) return;
+            const sys = row.querySelector(".system-col").textContent;
+            row.style.display = (value === "all" || sys === value) ? "" : "none";
+        });
+    });
 });
-    </script>
+
+
+    document.querySelectorAll(".test-link").forEach(el => {
+        el.addEventListener("click", () => {
+            const id = el.dataset.testid;
+            window.location.href = `/test/${encodeURIComponent(id)}`;
+        });
+    });
+});
+</script>
+
 </body>
 </html>
