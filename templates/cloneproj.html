@@ -1,78 +1,170 @@
 <!doctype html>
-
 <html>
 <head>
     <title>Clone Build Test</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        label { display: block; margin-top: 12px; }
-        select, input { width: 400px; padding: 6px; }
-        button { margin-top: 16px; padding: 8px 16px; }
-        #status { margin-top: 12px; }
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; line-height: 1.5; }
+        label { display: block; margin-top: 12px; font-weight: bold; color: #333; }
+        select, input { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        input[readonly] { background-color: #f0f0f0; color: #666; cursor: not-allowed; font-size: 0.85em; }
+        button { margin-top: 24px; padding: 12px; width: 100%; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        #status { margin-top: 15px; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+        .section { border-bottom: 1px solid #eee; padding-bottom: 20px; margin-bottom: 10px; }
+        .path-display { font-family: monospace; }
     </style>
 </head>
 <body>
     <h2>Clone Build Test</h2>
 
-```
-<label>Source build test</label>
-<select id="testlist"></select>
+    <div class="section">
+        <label>1. Select Source Test</label>
+        <select id="testlist" onchange="updateFields()"></select>
+        
+        <label>Source File Path</label>
+        <input type="text" id="src_path_display" class="path-display" readonly placeholder="Select a test to see its path">
+    </div>
 
-<label>New project name (path)</label>
-<input type="text" id="outputname" placeholder="new_project_name">
+<div class="section">
+    <label>2. Define Target</label>
+    <label>Target ID (Folder/Project Name)</label>
+    <input type="text" id="target_id" placeholder="e.g. my_new_feature_test">
 
-<button onclick="cloneProject()">Clone</button>
+    <label>Target Type</label>
+    <input type="text" id="target_type" placeholder="e.g. build">
 
-<div id="status"></div>
+    <label>Target File Path</label>
+    <input type="text" id="target_path" class="path-display" placeholder="Target file path (editable)">
+</div>
 
-<script>
-    function loadTests() {
-        fetch('/testfile_list')
-            .then(r => r.json())
-            .then(data => {
-                const sel = document.getElementById('testlist')
-                sel.innerHTML = ''
-data.forEach(item => {
-    if (item.types && item.types.build) {
-        const opt = document.createElement('option')
-        opt.value = item.module       // backend needs module name
-        opt.textContent = item.id     // user sees description
-        sel.appendChild(opt)
-    }
-})
 
-            })
-    }
+    <button onclick="cloneProject()">Execute Clone Operation</button>
 
-    function cloneProject() {
-        const testname = document.getElementById('testlist').value
-        const outputname = document.getElementById('outputname').value.trim()
-        const status = document.getElementById('status')
+    <div id="status"></div>
 
-        if (!testname || !outputname) {
-            status.textContent = 'test name and output name required'
-            return
+    <script>
+        function loadTests() {
+            fetch('/testfile_list')
+                .then(r => r.json())
+                .then(data => {
+                    const sel = document.getElementById('testlist');
+                    sel.innerHTML = '<option value="">-- Select Source Test --</option>';
+                    data.forEach(item => {
+                        if (item.types) {
+                            const typeNames = Object.keys(item.types).join(', ');
+                            const opt = document.createElement('option');
+                            
+                            // Map backend data to the option element
+                            opt.value = item.module; 
+                            opt.dataset.id = item.id;
+                            opt.dataset.path = item.path; // The __full_path__ from sys.modules
+                            opt.dataset.primaryType = Object.keys(item.types)[0] || 'test';
+                            
+                            opt.textContent = `${item.display_name || item.id} [${typeNames}]`;
+                            sel.appendChild(opt);
+                        }
+                    });
+                });
         }
 
-        status.textContent = 'cloning...'
+        function updateFields() {
+    const sel = document.getElementById('testlist');
+    const selected = sel.options[sel.selectedIndex];
+    const targetIdField = document.getElementById('target_id');
+    const targetTypeField = document.getElementById('target_type');
+    const pathField = document.getElementById('src_path_display');
+    const targetPathField = document.getElementById('target_path'); // New field
 
-        fetch(`/clone_as_new?testname=${encodeURIComponent(testname)}&outputname=${encodeURIComponent(outputname)}`)
+    if (selected.value) {
+        const newId = selected.dataset.id + '_copy';
+        targetIdField.value = newId;
+        targetTypeField.value = selected.dataset.primaryType;
+
+        fetch(`/module_path?src_module=${encodeURIComponent(selected.value)}`)
             .then(r => r.json())
             .then(res => {
                 if (res.status === 'success') {
-                    status.textContent = 'created at ' + res.path
+                    pathField.value = res.src_path;
+                    
+                    // Logic to autopopulate target path based on source path
+                    // This replaces the filename at the end of the path with the new ID
+                    const pathParts = res.src_path.split(/[\\/]/);
+                    pathParts.pop(); // Remove original filename
+                    const separator = res.src_path.includes('\\') ? '\\' : '/';
+                    targetPathField.value = pathParts.join(separator) + separator + newId + '/';
                 } else {
-                    status.textContent = 'error: ' + res.message
+                    pathField.value = 'Error: ' + res.message;
                 }
-            })
-            .catch(e => {
-                status.textContent = 'error: ' + e
-            })
+            });
+    } else {
+        targetIdField.value = '';
+        targetTypeField.value = '';
+        pathField.value = '';
+        targetPathField.value = '';
     }
+}
 
-    loadTests()
-</script>
-```
 
+function cloneProject() {
+    const src_module = document.getElementById('testlist').value;
+    const target_id = document.getElementById('target_id').value.trim();
+    const target_type = document.getElementById('target_type').value.trim();
+    const target_path = document.getElementById('target_path').value.trim(); // Get the edited path
+    const status = document.getElementById('status');
+
+            if (!src_module || !target_id || !target_type) {
+                status.textContent = 'Error: Please select a source and provide a target ID/Type.';
+                status.style.color = 'red';
+                status.style.background = '#fff0f0';
+                return;
+            }
+
+            status.textContent = 'Initialising clone...';
+            status.style.color = '#555';
+            status.style.background = '#f9f9f9';
+
+const params = new URLSearchParams({
+        src_module: src_module,
+        target_id: target_id,
+        target_type: target_type,
+        target_path: target_path // Pass it to the backend
+    });
+
+fetch(`/clone_as_new?${params.toString()}`)
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === 'success') {
+            document.getElementById('src_path_display').value = res.src_path;
+            status.textContent = 'Success!\nNew test created at: ' + res.path;
+            status.style.color = 'green';
+            status.style.background = '#f0fff0';
+        } else {
+            status.textContent = '✗ Error: ' + res.message;
+            status.style.color = 'red';
+            status.style.background = '#fff0f0';
+        }
+    });
+
+
+        }
+
+document.getElementById('target_id').addEventListener('input', function() {
+    const targetIdField = this;
+    const targetPathField = document.getElementById('target_path');
+    const srcPathField = document.getElementById('src_path_display');
+
+    if (srcPathField.value && targetIdField.value.trim()) {
+        // Recompute target path based on source path
+        const pathParts = srcPathField.value.split(/[\\/]/);
+        pathParts.pop(); // remove original filename
+        const separator = srcPathField.value.includes('\\') ? '\\' : '/';
+        targetPathField.value = pathParts.join(separator) + separator + targetIdField.value.trim() + '/';
+    }
+});
+
+
+        // Initialize on page load
+        loadTests();
+    </script>
 </body>
 </html>

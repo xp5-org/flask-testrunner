@@ -38,7 +38,6 @@ def index():
     db = ReportDB()
     summaries = db.get_all_reports_summary()
     latest_summary = db.get_latest_report_summary()
-    print("DEBUGL LATEST SUMMARY: ", latest_summary)
 
     return render_template(
         "index.html",
@@ -51,6 +50,13 @@ def index():
 def cloneproj():
     return render_template("cloneproj.html")
 
+
+@app.route("/failed_tests")
+def failedtestsinfo():
+    test_runner.reload_tests()
+    # gets test modules which failed to load
+    print("failed loads1: ", test_runner.failed_loads)
+    return jsonify(test_runner.failed_loads)
 
 
 @app.route("/testfile_list")
@@ -67,39 +73,32 @@ def testfile_list():
             "system": info.get("system"),
             "platform": info.get("platform")
         })
+        #print("testfile list result debug: ", result)
     return jsonify(result)
-
-
-@app.route('/test-logs/<test_id>')
-def view_test_logs(test_id):
-    db = ReportDB()
-    failed_logs = db.get_failed_steps_log(test_id)
-    return render_template('logs.html', logs=failed_logs, test_id=test_id)
-
 
 
 @app.route("/run/<testname>")
 def run_named_tests(testname):
-    # print(f"run {testname} called") - testname is the reg key
+    print(f"run {testname} called") # testname is the reg key
 
     progress_state.step = "0/0"
-    progress_state.test_name = testname
+    progress_state.testname = testname
 
     def run():
-        test_runner.run_testfile(testname, progress_state)
+        print(f"Thread started for {testname}")
+        res = test_runner.run_testfile(testname, progress_state)
+        print(f"Thread finished for {testname}. Results found: {len(res)}")
         progress_state.step = "Done"
-        progress_state.test_name = ""
-
     threading.Thread(target=run, daemon=True).start()
     return "Started"
-
 
 
 @app.route("/progress")
 def progress():
     return jsonify({
         "step": progress_state.step,
-        "test_name": progress_state.test_name
+        "testname": progress_state.testname,
+        "step_name": progress_state.step_name
     })
 
 
@@ -113,22 +112,52 @@ def view_report(filepath):
     return send_from_directory(directory, filename)
 
 
-@app.route("/clone_as_new")
-def clone_as_new():
-    from newprojecthelper import copybuildtest
-    
-    testname = request.args.get('testname')
-    outputname = request.args.get('outputname')
-
-    if not testname or not outputname:
-        return jsonify({"status": "error", "message": "testname and outputname required"}), 400
-
+@app.route('/module_path')
+def module_path():
+    import importlib, os
+    src_module = request.args.get('src_module')
+    if not src_module:
+        return jsonify({"status": "error", "message": "No module specified"}), 400
     try:
-        copybuildtest(testname, outputname)
-        return jsonify({"status": "success", "path": f"/testsrc/src/{outputname}"}), 200
+        mod = importlib.import_module(src_module)
+        src_file = os.path.abspath(mod.__file__)
+        src_dir = os.path.dirname(src_file)
+        return jsonify({"status": "success", "src_path": src_dir})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
-    
+
+
+@app.route('/clone_as_new')
+def clone_as_new():
+    from newprojecthelper import copybuildtest
+    import importlib
+    import os
+
+    src_module = request.args.get('src_module')
+    target_id = request.args.get('target_id')
+    target_type = request.args.get('target_type')
+
+    if not all([src_module, target_id, target_type]):
+        return jsonify({"status": "error", "message": "Missing parameters"}), 400
+
+    try:
+        mod = importlib.import_module(src_module)
+        src_file = os.path.abspath(mod.__file__)
+        src_dir = os.path.dirname(src_file)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+    try:
+        copybuildtest(src_dir, target_id)
+        return jsonify({
+            "status": "success",
+            "path": f"/testsrc/src/{target_id}",
+            "src_path": src_dir
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 
 
 
@@ -136,20 +165,40 @@ def clone_as_new():
 def test_details(test_id):
     test_runner.reload_tests()
 
-    test_info = next(
-        (
-            info for info in apphelpers.testfile_registry.values()
-            if info.get("id", "").replace(" ", "_") == test_id
-        ),
-        {}
-    )
+    matching_tests = []
+    for info in apphelpers.testfile_registry.values():
+        test_id_normalized = info.get("id", "").replace(" ", "_")
+        if test_id_normalized == test_id:
+            test_copy = dict(info)
+            test_copy['latest_status'] = {}
+            # for each type, fetch the most recent report status
+            for type_name, internal_id in info.get('types', {}).items():
+                all_summaries = db.get_all_reports_summary()
+                # find reports matching this internal_id
+                matching_reports = [
+                    r for r in all_summaries
+                    if internal_id in os.path.basename(r[0])
+                ]
+                if matching_reports:
+                    # take the most recent
+                    latest = max(matching_reports, key=lambda r: r[3])
+                    test_copy['latest_status'][type_name] = latest[2]  # r[2] is status
+                else:
+                    test_copy['latest_status'][type_name] = None
+            matching_tests.append(test_copy)
 
-    internal_id = None
-    if test_info.get('types'):
-        internal_id = next(iter(test_info['types'].values()))
+    if not matching_tests:
+        return "Test not found", 404
 
-    all_summaries = db.get_all_reports_summary()
-    print("allsumarydebug: ", all_summaries)
+    # single internal_id report filtering
+    internal_id = next(iter(matching_tests[0]['types'].values())) if matching_tests[0].get('types') else None
+
+    latest_summary = db.get_latest_report_summary()
+    all_logs = db.get_failed_steps_log(internal_id) if internal_id else []
+    failed_step_names = {step["step_name"] for step in latest_summary if step["status"] == "FAIL"}
+    # keep only logs corresponding to failed steps
+    failure_logs = [log for log in all_logs if log.get("name") in failed_step_names]
+
     reports = [
         {
             "filename": os.path.basename(r[0]),
@@ -158,53 +207,21 @@ def test_details(test_id):
             "status": r[2],
             "timestamp": r[3]
         }
-        for r in all_summaries
+        for r in db.get_all_reports_summary()
         if internal_id and internal_id in os.path.basename(r[0])
     ]
-
-    latest = db.get_latest_report_summary()
-    latest_summary = []
-    for r in latest:
-        filepath, duration, status = r
-        step_name = os.path.basename(filepath)
-        latest_summary.append((step_name, duration, status))
-
-
-    failure_logs = []
-    if internal_id:
-        failure_logs = db.get_failed_steps_log(internal_id)
-
-    # example log to test js/html template
-    # failure_logs = [
-    #         {
-    #             "name": "STEP_FAILURE",
-    #             "output": "Error: Test error message"
-    #         },
-    #         {
-    #             "name": "TIMEOUT_WARN",
-    #             "output": "Warning: Test warning messsage"
-    #         } ]
-    # print("failurelogsdb: ", failure_logs)
-
     reports.sort(key=lambda r: r["timestamp"], reverse=True)
     reports = reports[:5]
-    
+
     return render_template(
         "test_detail.html",
         testname=test_id,
-        test_info=test_info,
+        test_info=matching_tests,
         reports=reports,
         internal_id=internal_id,
         latest_summary=latest_summary,
         failure_logs=failure_logs
     )
-
-
-
-
-
-
-
 
 
 

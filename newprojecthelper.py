@@ -23,41 +23,38 @@ def newprojdir(outputname):
         os.makedirs(full_path)
     return full_path
 
+def copybuildtest(src_dir, outputname):
+    import os
+    import shutil
 
-def copybuildtest(testname, outputname):
-    if '.' not in testname:
-        raise ValueError("testname must be a full module name")
+    if not os.path.isdir(src_dir):
+        raise ValueError(f"Source directory does not exist: {src_dir}")
 
-    mod = importlib.import_module(testname)
-    source_file = mod.__file__
-    source_dir = os.path.dirname(source_file)  # parent dir of the test
-
-    # Extract platform (assumes source_dir = /testsrc/sourcedir/<platform>/<project>)
-    parts = source_dir.split(os.sep)
+    # Assume platform is the folder immediately under sourcedir
+    parts = src_dir.split(os.sep)
     try:
         platform_index = parts.index("sourcedir") + 1
         platform = parts[platform_index]
     except (ValueError, IndexError):
-        raise RuntimeError(f"Cannot determine platform from {source_dir}")
+        raise RuntimeError(f"Cannot determine platform from {src_dir}")
 
-    # Build target directory: /testsrc/sourcedir/<platform>/<outputname>
     dest_dir = os.path.join("/testsrc/sourcedir", platform, outputname)
-    if not os.path.exists(dest_dir):
-        os.makedirs(dest_dir)
+    os.makedirs(dest_dir, exist_ok=True)
 
-    # Copy all files from source_dir to dest_dir
-    for fname in os.listdir(source_dir):
-        src_path = os.path.join(source_dir, fname)
+    # Copy all files, rename main test file if needed
+    for fname in os.listdir(src_dir):
+        src_path = os.path.join(src_dir, fname)
         if os.path.isfile(src_path):
-            # Rename only the test file itself
-            if src_path == source_file:
+            if fname.startswith("__testlist__"):
                 dst_path = os.path.join(dest_dir, f"__testlist__{outputname}.py")
             else:
                 dst_path = os.path.join(dest_dir, fname)
             shutil.copy2(src_path, dst_path)
 
+    # Optionally update metadata if you have that function
     update_register_metadata(os.path.join(dest_dir, f"__testlist__{outputname}.py"), outputname)
-    print(f"Copied {source_dir} → {dest_dir} (renamed {os.path.basename(source_file)})")
+
+    print(f"Copied {src_dir} → {dest_dir}")
 
 
 

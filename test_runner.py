@@ -40,8 +40,6 @@ context = {
 TESTLIST_PREFIXES = ("__testlist__")
 
 
-
-
 class TestrunnerTimer:
     start_times = {}
     stop_times = {}
@@ -63,45 +61,57 @@ class TestrunnerTimer:
         return cls.stop_times.get(test_name)
 
 
-
+failed_loads = []
 
 def _load_or_reload(modname):
+    global failed_loads
     try:
         if modname in sys.modules:
             importlib.reload(sys.modules[modname])
         else:
             importlib.import_module(modname)
     except Exception as e:
+        # only log 'module' failure
         print(f"Failed to load {modname}: {e}")
+        if modname not in failed_loads:
+            failed_loads.append(modname)
+
 
 
 def reload_tests():
+    global failed_loads
+    failed_loads.clear()
     apphelpers.clear_registries()
 
     if TESTSRC_ROOT not in sys.path:
         sys.path.insert(0, TESTSRC_ROOT)
 
-    for project in os.listdir(TESTSRC_ROOT):
-        project_path = os.path.join(TESTSRC_ROOT, project)
-        if not os.path.isdir(project_path):
+    seen_modules = set()
+
+    # Use recursive glob to find all .py files once
+    search_path = os.path.join(TESTSRC_ROOT, "**", "*.py")
+    
+    for fpath in glob.glob(search_path, recursive=True):
+        fname = os.path.basename(fpath)
+        
+        if fname == "__init__.py":
+            continue
+            
+        if not fname.startswith(TESTLIST_PREFIXES):
             continue
 
-        _load_or_reload(project)
+        rel_path = os.path.relpath(fpath, TESTSRC_ROOT)
+        # Normalize path separators to dots
+        modname = rel_path.replace(os.sep, ".")[:-3]
+        
+        # Double-check: ensure we don't load a path that ends up being the same module
+        if modname not in seen_modules:
+            _load_or_reload(modname)
+            if modname in sys.modules:
+                sys.modules[modname].__full_path__ = os.path.abspath(fpath)
+            seen_modules.add(modname)
 
-        patterns = [
-            os.path.join(project_path, "*.py"),
-            os.path.join(project_path, "*", "*.py")
-        ]
 
-        for pattern in patterns:
-            for fpath in glob.glob(pattern):
-                fname = os.path.basename(fpath)
-                if not fname.startswith(TESTLIST_PREFIXES):
-                    continue
-
-                rel_path = os.path.relpath(fpath, TESTSRC_ROOT)
-                modname = rel_path.replace(os.sep, ".")[:-3]
-                _load_or_reload(modname)
 
 
 def run_registered_test(name, registry, context):
@@ -131,50 +141,93 @@ def run_registered_test(name, registry, context):
     return (name, "NOT FOUND", "gray", "No matching test found", "", 0.00)
 
 
-def run_testfile(module_name, state=None):
-    reload_tests()
-    target_module = module_name
-    
-    meta = apphelpers.testfile_registry.get(target_module)
-    if not meta:
-        if state:
-            state.step = "Error"
-            state.test_name = "No registry entry"
-        return []
 
-    registry_map = {
-        "build": apphelpers.buildtest_registry,
-        "play": apphelpers.playtest_registry,
-        "package": apphelpers.packagetest_registry,
-    }
+# def run_testfile(module_name, state=None):
+#     # 1. Clear everything and reload the target module
+#     # This ensures the registries ONLY contain tests from this file
+#     global failed_loads
+#     failed_loads.clear()
+#     apphelpers.clear_registries()
+    
+#     # Reload logic (simplified for the target)
+#     _load_or_reload(module_name)
+
+#     all_tests = []
+#     test_descriptions = []
+    
+#     # 2. Grab everything that was just registered
+#     registry_map = {k.replace("_registry", ""): v 
+#                     for k, v in apphelpers.__dict__.items() 
+#                     if k.endswith("_registry") and isinstance(v, list)}
+
+#     for t_type, registry in registry_map.items():
+#         for f in registry:
+#             desc = getattr(f, "test_description", None)
+#             if desc and f not in all_tests:
+#                 all_tests.append(f)
+#                 test_descriptions.append(desc)
+
+#     if not all_tests:
+#         print(f"FINISHED: No tests found in registries after loading {module_name}")
+#         if state:
+#             state.step, state.test_name = "Done", "No tests found"
+#         return []
+
+#     print(f"Found {len(all_tests)} tests to run.")
+#     context = {"sock": None, "abort": False}
+#     return run_tests(test_descriptions, all_tests, context)
+
+
+
+def run_testfile(module_name, state=None):
+    # 1. Prepare Environment
+    global failed_loads
+    failed_loads.clear()
+    apphelpers.clear_registries()
+    
+    # We must reload the specific test list module to populate the registries
+    _load_or_reload(module_name)
+    
+    meta = apphelpers.testfile_registry.get(module_name)
+    if not meta:
+        print(f"ERROR: {module_name} not found in testfile_registry")
+        if state:
+            state.step, state.test_name = "Error", "No registry entry"
+        return []
 
     all_tests = []
     test_descriptions = []
     
-    test_types = meta.get("types", {})
+    # 2. Dynamic Registry Collection
+    # After _load_or_reload, the registries in apphelpers should be populated
+    registry_map = {k.replace("_registry", ""): v 
+                    for k, v in apphelpers.__dict__.items() 
+                    if k.endswith("_registry") and isinstance(v, list)}
 
-    for t, mod_path in test_types.items():
-        registry = registry_map.get(t)
-        if registry:
-            for f in registry:
-                # check if test decorator is commented out and ignore test step if found
-                is_correct_mod = (f.__module__ == mod_path)
-                desc = getattr(f, "test_description", None)
-
-                if is_correct_mod and desc is not None:
-                    if f not in all_tests:
-                        all_tests.append(f)
-                        test_descriptions.append(desc)
+    for t_type, registry in registry_map.items():
+        for f in registry:
+            desc = getattr(f, "test_description", None)
+            # We don't filter by __module__ here because clear_registries() 
+            # ensured only the current module's tests are present.
+            if desc and f not in all_tests:
+                all_tests.append(f)
+                test_descriptions.append(desc)
 
     if not all_tests:
+        print(f"FINISHED: No tests found after loading {module_name}")
         if state:
             state.step = "Done"
             state.test_name = "No tests found (Decorators likely commented out)"
         return []
 
+    print(f"Found {len(all_tests)} tests to run for {module_name}.")
     context = {"sock": None, "abort": False}
-    results = run_tests(test_descriptions, all_tests, context)
 
+    # 3. Execution
+    # results = run_tests(test_descriptions, all_tests, context)
+    results = run_tests(test_descriptions, all_tests, context, module_name)
+
+    # 4. Timer Helpers for DB
     def get_start(name):
         ts = TestrunnerTimer.get_start(name)
         return ts if ts is not None else time.time()
@@ -186,6 +239,7 @@ def run_testfile(module_name, state=None):
         dur = next((d for n, s, c, o, out, d in results if n == name), 0.0)
         return get_start(name) + dur
 
+    # 5. Report Generation
     total_suite_duration = round(sum(r[5] for r in results), 2)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     subdir_path = os.path.join(REPORT_DIR, timestamp)
@@ -194,6 +248,7 @@ def run_testfile(module_name, state=None):
     report_path = os.path.join(subdir_path, f"{module_name}.html")
     generate_report(results, report_path, testlist_name=module_name)
 
+    # 6. Database Population
     db.populate_sqlite(
         test_id=module_name,
         results=[(n, s, c, o, out, d) for n, s, c, o, out, d in results],
@@ -202,6 +257,7 @@ def run_testfile(module_name, state=None):
         get_start=get_start,
         get_stop=get_stop
     )
+
     if state:
         state.step = "Done"
         state.test_name = ""
@@ -210,10 +266,7 @@ def run_testfile(module_name, state=None):
 
 
 
-
-
-
-def run_tests(test_descriptions, registry, context):
+def run_tests(test_descriptions, registry, context, module_name):
     results = []
     seen_names = set()
     unique_tests = []
@@ -229,13 +282,15 @@ def run_tests(test_descriptions, registry, context):
     total = len(unique_tests)
     if total == 0:
         progress_state.step = "0/0"
-        progress_state.test_name = "No tests found"
+        progress_state.testname = ""
+        progress_state.step_name = "No tests found"
         return []
 
     for index, test_func in enumerate(unique_tests, start=1):
         test_name = getattr(test_func, "test_description", test_func.__name__)
         progress_state.step = f"{index}/{total}"
-        progress_state.test_name = test_name
+        progress_state.testname = module_name
+        progress_state.step_name = test_name
 
         if context.get("abort"):
             results.append((test_name, "SKIPPED", "gray", "Skipped", "", 0.00))
@@ -246,7 +301,8 @@ def run_tests(test_descriptions, registry, context):
             results.append(result)
 
     progress_state.step = f"{total}/{total}"
-    progress_state.test_name = "Done"
+    progress_state.testname = ""
+    progress_state.step_name = "Done"
     return results
 
 

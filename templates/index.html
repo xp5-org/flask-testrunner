@@ -9,24 +9,28 @@
             table-layout: fixed;
         }
 
+        th {
+        background-color: #cccccc;
+        }
+
+
         th, td {
             border: 1px solid #ccc;
             padding: 8px;
             text-align: left;
         }
 
-        tr:nth-child(odd) {
+        /* tr:nth-child(odd) {
             background-color: #e0e0e0;
-        }
+        } */
 
         th:nth-child(1), td:nth-child(1) { width: 25%; }
         th:nth-child(2), td:nth-child(2) { width: 20%; }
         th:nth-child(3), td:nth-child(3) { width: 35%; }
         th:nth-child(4), td:nth-child(4) { width: 20%; }
-
-        .green { background-color: #c8f7c5; }
-        .red { background-color: #f7c5c5; }
-        .gray { background-color: #eeeeee; }
+.green { background-color: #c8f7c5 !important; }
+.red { background-color: #f7c5c5 !important; }
+.gray { background-color: #eeeeee !important; }
 
         a {
             display: inline-block;
@@ -41,158 +45,246 @@
 <body>
     <p id="progress-status">Progress: Idle</p>
 
+    <h3>Filter by System</h3>
     <select id="system-filter">
     <option value="all">All</option>
 </select>
 
 
     <h2>Available Tests</h2>
+    <div id="failed-tests-container"></div>
     <div id="testfile-container"></div>
-    <h3>Filter by System</h3>
 
 
     <br><br>
 
-    <h1>Most Recent</h1>
-    {% if latest_summary %}
-        <table>
-            <tr><th>Test</th><th>Duration (s)</th><th>Status</th></tr>
-            {% for test, duration, status in latest_summary %}
-                <tr>
-                    <td>{{ test }}</td>
-                    <td>{{ duration }}</td>
-                    <td class="{{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else 'gray') }}">{{ status }}</td>
-                </tr>
-            {% endfor %}
-        </table>
-    {% else %}
-        <p>No reports found.</p>
-    {% endif %}
 
-    <br><br>
-
-    
-    <h2>Summaries</h2>
-    <table>
-        <tr><th>Report</th><th>Duration</th><th>Status</th></tr>
-{% for report, duration, status, timestamp in summaries %}
-<tr>
-    <td><a href="{{ url_for('view_report', filepath=report) }}">{{ report }}</a></td>
-    <td>{{ duration }}</td>
-    <td class="{{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else 'gray') }}">{{ status }}</td>
-    <td>{{ timestamp }}</td>
-</tr>
-{% endfor %}
-
-    </table>
 
 <script>
+const failedColor = "#f7c5c5";
+
 document.addEventListener("DOMContentLoaded", async () => {
-    const status = document.getElementById("progress-status");
-    let polling = false;
-    let hasStartedRunning = false;
+    const failedContainer = document.getElementById("failed-tests-container");
 
-    const poll = async () => {
-        try {
-            const res = await fetch("/progress");
-            const data = await res.json();
+    try {
+        const res = await fetch("/failed_tests");
+        const failedTests = await res.json();
 
-            if (data.step === "Done") {
-                status.textContent = "Progress: Complete";
-                if (hasStartedRunning) {
-                    polling = false;
-                    setTimeout(() => location.reload(), 1000);
-                    return;
-                }
-                polling = false;
-                return;
-            }
-
-            if (data.step !== "Idle") {
-                polling = true;
-                hasStartedRunning = true;
-                status.textContent = `Progress: ${data.step} - ${data.test_name}`;
-                setTimeout(poll, 3000);
-            } else {
-                polling = false;
-                status.textContent = "Progress: Idle";
-            }
-        } catch (e) {
-            setTimeout(poll, 3000);
+        if (failedTests.length > 0) {
+            const html = `<div style="color: red; margin-top: 8px;">
+                            <strong>Failed to load:</strong> ${failedTests.join(", ")}
+                          </div>`;
+            failedContainer.innerHTML = html;
         }
-    };
+    } catch (err) {
+        console.error("Error fetching failed tests:", err);
+    }
+});
+</script>
 
-    window.startTest = (file, id, type) => {
-        if (polling) return;
-        polling = true;
-        hasStartedRunning = true;
-        status.textContent = `Progress: Starting ${id} (${type})...`;
+{% if latest_summary %}
+<h1>Most Recent: {{ latest_summary[0].test_id.split('.')[-1] }}</h1>
 
-        fetch(`/run/${file}`)
-            .then(r => r.ok ? poll() : (polling = false))
-            .catch(() => {
-                polling = false;
-                status.textContent = "Error: Could not reach server.";
-            });
-    };
+    <table id="most-recent-table">
+        <tr><th>Test</th><th>Duration (s)</th><th>Status</th></tr>
+        {% for step in latest_summary %}
+            <tr>
+                <td>{{ step.step_name }}</td>
+                <td>{{ step.duration }}</td>
+                <td class="{{ 'green' if step.status == 'PASS' else ('red' if step.status == 'FAIL' else 'gray') }}">{{ step.status }}</td>
+            </tr>
+        {% endfor %}
+    </table>
+{% endif %}
 
-    poll();
+
+<h2>Summaries</h2>
+<table id="summaries-table">
+    <tr><th>Report</th><th>Duration</th><th>Timestamp</th><th>Status</th></tr>
+    {% for report, duration, status, timestamp in summaries %}
+    <tr>
+        <td><a href="{{ url_for('view_report', filepath=report) }}">{{ report }}</a></td>
+        <td>{{ duration }}</td>
+        <td>{{ timestamp }}</td>
+        <td class="{{ 'green' if status.upper() == 'PASS' else ('red' if status.upper() == 'FAIL' else 'gray') }}">
+            {{ status }}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+
+
+<script>
+const bgcolor1 = "#f5f5f5";
+const bgcolor2 = "#e0e0e0";
+
+// 1. Define startTest and the Polling logic
+let isPolling = false;
+document.addEventListener("DOMContentLoaded", async () => {
+window.startTest = async (file, displayName, type) => {
+    const statusEl = document.getElementById("progress-status");
+    statusEl.textContent = `Progress: Starting ${displayName}...`;
+    
+    try {
+        const response = await fetch(`/run/${encodeURIComponent(file)}`);
+        
+        if (response.ok) {
+            // Start polling if not already running
+            if (!isPolling) {
+                isPolling = true;
+                pollProgress();
+            }
+        } else {
+            statusEl.textContent = `Progress: Error (${response.status})`;
+        }
+    } catch (err) {
+        console.error("Fetch error:", err);
+        statusEl.textContent = "Progress: Connection failed.";
+    }
+};
+
+async function pollProgress() {
+    const statusEl = document.getElementById("progress-status");
+    
+    try {
+        const res = await fetch("/progress");
+        const data = await res.json();
+
+        if (data.step === "Done") {
+            // Only reload if we were ACTIVE (isPolling is true)
+            // If we just loaded the page and it says Done, isPolling is false, so we just show Idle.
+            if (isPolling) {
+                statusEl.textContent = "Progress: Complete - Updating tables...";
+                isPolling = false;
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                statusEl.textContent = "Progress: Idle";
+            }
+            return;
+        }
+
+        if (data.step !== "Idle") {
+            // If we see a progress string (like "1/5"), we are now officially polling
+            isPolling = true;
+            statusEl.textContent = `Progress: ${data.step} - ${data.testname} - ${data.test_step}`;
+            setTimeout(pollProgress, 2000);
+        } else {
+            statusEl.textContent = "Progress: Idle";
+            isPolling = false; 
+        }
+    } catch (e) {
+        console.error("Polling error:", e);
+        setTimeout(pollProgress, 5000); 
+    }
+}
+pollProgress(); 
+});
+document.addEventListener("DOMContentLoaded", async () => {
+    const container = document.getElementById("testfile-container");
+    const systemFilter = document.getElementById("system-filter");
 
     const testRes = await fetch("/testfile_list");
     const testfiles = await testRes.json();
-    const container = document.getElementById("testfile-container");
 
+    // Organize tests by platform
     const platforms = testfiles.reduce((acc, t) => {
         const p = t.platform || "Unknown";
         (acc[p] = acc[p] || []).push(t);
         return acc;
     }, {});
 
-    const systemSet = new Set();
+    // Populate dropdown
+    const systemSet = new Set(testfiles.map(t => t.system).filter(Boolean));
+    Array.from(systemSet).sort().forEach(sys => {
+        systemFilter.insertAdjacentHTML("beforeend", `<option value="${sys}">${sys}</option>`);
+    });
 
+    // Render all platforms & tests
     for (const [platform, tests] of Object.entries(platforms)) {
-        let html = `<h3>${platform}</h3><table class="test-table"><tr><th>ID</th><th>System</th><th>Run</th></tr>`;
-        tests.forEach(test => {
-            systemSet.add(test.system);
-            const buttons = Object.entries(test.types).map(([type, file]) =>
-                `<button onclick="startTest('${file}', '${test.display_name}', '${type}')">${type}</button>`
-            ).join("");
+        let html = `<div class="platform-section" data-platform="${platform}">
+                        <h3>${platform}</h3>
+                        <table class="test-table">
+                            <tr><th>ID</th><th>System</th><th>Run</th></tr>`;
 
+        const grouped = {};
+        tests.forEach(test => {
+            const key = `${test.display_name}|${test.system}`;
+            if (!grouped[key]) grouped[key] = [];
+            grouped[key].push(test);
+        });
+
+        Object.values(grouped).forEach(group => {
+            const test = group[0];
+            const buttons = group.map(t =>
+                Object.entries(t.types || {}).map(([type, file]) =>
+                    `<button onclick="startTest('${file}', '${t.display_name}', '${type}')">${type}</button>`
+                ).join("")
+            ).join("");
+            
             html += `<tr>
                         <td><span class="test-link" data-testid="${test.id}">${test.display_name}</span></td>
                         <td class="system-col">${test.system}</td>
                         <td>${buttons}</td>
                      </tr>`;
         });
-        container.insertAdjacentHTML("beforeend", html + "</table>");
+
+        html += `</table></div>`;
+        container.insertAdjacentHTML("beforeend", html);
     }
 
-    const systemFilter = document.getElementById("system-filter");
-    Array.from(systemSet).sort().forEach(sys => {
-        systemFilter.insertAdjacentHTML("beforeend", `<option value="${sys}">${sys}</option>`);
-    });
-
-systemFilter.addEventListener("change", () => {
-    const value = systemFilter.value;
-    document.querySelectorAll(".test-table").forEach(table => {
-        const rows = table.querySelectorAll("tr");
-        rows.forEach((row, i) => {
-            if (i === 0) return;
-            const sys = row.querySelector(".system-col").textContent;
-            row.style.display = (value === "all" || sys === value) ? "" : "none";
+    // Initial styling for rows
+    const updateStriping = (rows) => {
+        const visibleRows = rows.filter(r => r.style.display !== "none");
+        visibleRows.forEach((row, i) => {
+            row.style.backgroundColor = (i % 2 === 0) ? bgcolor1 : bgcolor2;
         });
+    };
+
+    // Style platform tables
+    document.querySelectorAll(".platform-section").forEach(section => {
+        const rows = Array.from(section.querySelectorAll("tr")).slice(1);
+        updateStriping(rows);
     });
-});
 
+    // Style summary tables
+    document.querySelectorAll("#most-recent-table, #summaries-table").forEach(tbl => {
+        const rows = Array.from(tbl.querySelectorAll("tr")).slice(1);
+        updateStriping(rows);
+    });
 
+    // Link click handlers
     document.querySelectorAll(".test-link").forEach(el => {
         el.addEventListener("click", () => {
             const id = el.dataset.testid;
             window.location.href = `/test/${encodeURIComponent(id)}`;
         });
     });
+
+    // Filter Logic
+    systemFilter.addEventListener("change", () => {
+        const value = systemFilter.value;
+        document.querySelectorAll(".platform-section").forEach(section => {
+            const rows = Array.from(section.querySelectorAll("tr")).slice(1);
+            let hasVisible = false;
+
+            rows.forEach(row => {
+                const sysCol = row.querySelector(".system-col");
+                const sys = sysCol ? sysCol.textContent : "";
+                if (value === "all" || sys === value) {
+                    row.style.display = "";
+                    hasVisible = true;
+                } else {
+                    row.style.display = "none";
+                }
+            });
+
+            section.style.display = hasVisible ? "" : "none";
+            updateStriping(rows);
+        });
+    });
 });
 </script>
+
 
 </body>
 </html>

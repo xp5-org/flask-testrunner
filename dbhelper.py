@@ -73,33 +73,38 @@ class ReportDB:
 
 
     def get_latest_report_summary(self):
-            conn = self._connect()
-            cur = conn.cursor()
-            cur.execute("SELECT id FROM report ORDER BY id DESC LIMIT 1")
-            row = cur.fetchone()
-            if not row:
-                conn.close()
-                return []
-
-            latest_report_id = row[0]
-            rows = self.fetch_results_for_report(latest_report_id)
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM report ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        if not row:
             conn.close()
+            return []
 
-            summary = []
-            for r in rows:
-                # 0:id, 1:report_id, 2:test_index, 3:test_id, 4:name, 5:status, 9:duration
-                step_name = r[4] or "Unnamed Step"
-                status_val = r[5].upper() if r[5] else "OTHER"
-                duration = f"{r[9]:.2f}" if r[9] is not None else "0.00"
+        latest_report_id = row[0]
+        rows = self.fetch_results_for_report(latest_report_id)
+        conn.close()
 
-                if "PASS" in status_val:
-                    status = "PASS"
-                elif "FAIL" in status_val:
-                    status = "FAIL"
-                else:
-                    status = "OTHER"
-                summary.append((step_name, duration, status))
-            return summary
+        summary = []
+        for r in rows:
+            step_name = r[4] or "Unnamed Step"
+            status_val = r[5].upper() if r[5] else "SKIP"
+            duration = f"{r[9]:.2f}" if r[9] is not None else "0.00"
+
+            if "PASS" in status_val:
+                status = "PASS"
+            elif "FAIL" in status_val:
+                status = "FAIL"
+            else:
+                status = "SKIP"
+
+            summary.append({
+                "step_name": step_name,
+                "duration": duration,
+                "status": status,
+                "test_id": r[3]  # add test_id here
+            })
+        return summary
 
 
     def get_failed_steps_log(self, internal_id):

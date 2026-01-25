@@ -19,49 +19,66 @@
         a:hover { text-decoration: underline; }
     </style>
 <script>
-function runTest(internalName) {
-    const status = document.getElementById("progress-status");
-    let polling = true;
-    let hasStartedRunning = true;
+let isPolling = false;
 
+// 1. Function triggered by the Run button
+async function runTest(internalName) {
+    const status = document.getElementById("progress-status");
     status.textContent = `Progress: Starting ${internalName}...`;
 
-    fetch(`/run/${internalName}`)
-        .then(r => {
-            if (!r.ok) throw new Error("Failed to start test");
-            poll(); // start polling immediately
-        })
-        .catch(() => {
-            polling = false;
-            status.textContent = "Error: Could not start test.";
-        });
-
-    async function poll() {
-        if (!polling) return;
-
-        try {
-            const res = await fetch("/progress");
-            const data = await res.json();
-
-            if (data.step === "Done") {
-                status.textContent = "Progress: Complete";
-                polling = false;
-                setTimeout(() => location.reload(), 1000);
-                return;
-            }
-
-            if (data.step !== "Idle") {
-                status.textContent = `Progress: ${data.step} - ${data.test_name}`;
-                setTimeout(poll, 3000);
-            } else {
-                status.textContent = "Progress: Idle";
-                setTimeout(poll, 3000);
-            }
-        } catch (e) {
-            setTimeout(poll, 3000);
+    try {
+        const r = await fetch(`/run/${encodeURIComponent(internalName)}`);
+        if (!r.ok) throw new Error("Failed to start test");
+        
+        // Start polling if not already active
+        if (!isPolling) {
+            isPolling = true;
+            poll();
         }
+    } catch (err) {
+        console.error(err);
+        status.textContent = "Error: Could not start test.";
     }
 }
+
+// 2. The recursive polling logic
+async function poll() {
+    const status = document.getElementById("progress-status");
+
+    try {
+        const res = await fetch("/progress");
+        const data = await res.json();
+
+        // Only reload if we were actively running a test
+        if (data.step === "Done") {
+            if (isPolling) {
+                status.textContent = "Progress: Complete - Updating...";
+                isPolling = false;
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                status.textContent = "Progress: Idle";
+            }
+            return;
+        }
+
+        if (data.step !== "Idle") {
+            isPolling = true; // We found an active test (on load or after click)
+            status.textContent = `Progress: ${data.step} - ${data.test_name}`;
+            setTimeout(poll, 2000);
+        } else {
+            status.textContent = "Progress: Idle";
+            isPolling = false;
+        }
+    } catch (e) {
+        console.error("Polling error:", e);
+        setTimeout(poll, 5000);
+    }
+}
+
+// 3. Start polling immediately when the page opens
+document.addEventListener("DOMContentLoaded", () => {
+    poll();
+});
 </script>
 
 
@@ -74,24 +91,30 @@ function runTest(internalName) {
 <h1>Test Details: {{ testname }}</h1>
 <p id="progress-status">Progress: Idle</p>
 
-<div class="info">
-    <div><strong>ID:</strong> {{ test_info.get('id', 'N/A') }}</div>
-    <div><strong>System:</strong> {{ test_info.get('system', 'N/A') }}</div>
-    <div><strong>Platform:</strong> {{ test_info.get('platform', 'N/A') }}</div>
+<!-- Buttons section split: left-half tiled -->
+<div class="grid-buttons">
+    {% for test in test_info %}
+        {% for type, internal in test.types.items() %}
+            {% set status = test.latest_status[type] %}
+            <div class="grid-item {{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else '') }}">
+                <div><strong>ID:</strong> {{ test.id }}</div>
+                <div><strong>System:</strong> {{ test.system or 'N/A' }}</div>
+                <div><strong>Platform:</strong> {{ test.platform or 'N/A' }}</div>
+                <div><strong>Status:</strong> {{ status or 'N/A' }}</div>
+                <!-- <div><small>{{ type }}</small></div> -->
+                <!-- <button onclick="runTest('{{ internal }}')">Run</button> -->
+                <!-- <button onclick="runTest({{ internal|tojson }})">{{ type }}</button> -->
+                <button onclick="runTest('{{ internal }}')">{{ type }}</button>
+            </div>
+        {% endfor %}
+    {% endfor %}
 </div>
 
 
 
-
-{% if test_info.get('types') %}
-    {% for type, internal in test_info.types.items() %}
-        <button onclick="runTest('{{ internal }}')">Run {{ type }}</button>
-    {% endfor %}
-{% else %}
-    <p>No runnable types found for this test.</p>
-{% endif %}
+</div>
 {% if latest_summary %}
-<h2>Most Recent Test Steps</h2>
+<!-- <h2>Most Recent Test Steps</h2> -->
 
 {% if failure_logs %}
     <h3>Recent Non-Passing Steps</h3>
@@ -104,8 +127,12 @@ function runTest(internalName) {
         {% endfor %}
     </div>
 {% endif %}
+{% if latest_summary %}
 <table>
     <thead>
+        <tr>
+            <th colspan="4">Most Recent: {{ latest_summary[0].test_id.split('.')[-1] }}</th>
+        </tr>
         <tr>
             <th>Step</th>
             <th>Duration</th>
@@ -113,15 +140,18 @@ function runTest(internalName) {
         </tr>
     </thead>
     <tbody>
-    {% for step_name, duration, status in latest_summary %}
+    {% for step in latest_summary %}
         <tr>
-            <td>{{ step_name }}</td>
-            <td>{{ duration }}</td>
-            <td class="{{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else 'gray') }}">{{ status }}</td>
+            <td>{{ step.step_name }}</td>
+            <td>{{ step.duration }}</td>
+            <td class="{{ 'green' if step.status == 'PASS' else ('red' if step.status == 'FAIL' else 'gray') }}">{{ step.status }}</td>
         </tr>
     {% endfor %}
     </tbody>
 </table>
+{% endif %}
+
+
 {% else %}
 <p>No recent test steps available.</p>
 {% endif %}
@@ -151,6 +181,52 @@ function runTest(internalName) {
 {% else %}
 <p>No reports found for this test.</p>
 {% endif %}
+<style>
+.buttons-container {
+    display: flex;
+    width: 100%;
+    margin-bottom: 20px;
+}
 
+.left-half {
+    width: 50%;
+    padding-right: 10px;
+    box-sizing: border-box;
+}
+
+.right-half {
+    width: 50%;
+    padding-left: 10px;
+    box-sizing: border-box;
+}
+
+/* grid layout for buttons */
+.grid-buttons {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.grid-item.green {
+    background-color: #c8f7c5; /* light green */
+}
+
+.grid-item.red {
+    background-color: #f7c5c5; /* light red */
+}
+
+.grid-item {
+    border: 1px solid #ccc;
+    padding: 10px;
+    text-align: center;
+    background-color: #f9f9f9; /* default gray */
+    box-sizing: border-box;
+}
+
+.grid-item button {
+    width: 100%;
+    margin-top: 5px;
+}
+</style>
 </body>
 </html>
