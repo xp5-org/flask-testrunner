@@ -215,11 +215,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         Object.values(grouped).forEach(group => {
             const test = group[0];
-            const buttons = group.map(t =>
-                Object.entries(t.types || {}).map(([type, file]) =>
-                    `<button onclick="startTest('${file}', '${t.display_name}', '${type}')">${type}</button>`
-                ).join("")
-            ).join("");
+const buttons = group.map(t =>
+    Object.entries(t.types || {}).map(([type, file]) =>
+        `<button onclick="startTest('${t.module}', '${t.display_name}', '${type}')">${type}</button>`
+    ).join("")
+).join("");
+
             
             html += `<tr>
                         <td><span class="test-link" data-testid="${test.id}">${test.display_name}</span></td>

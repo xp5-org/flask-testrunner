@@ -78,6 +78,28 @@ def _load_or_reload(modname):
 
 
 
+import importlib.util
+
+def load_testfile_from_path(fpath):
+    global failed_loads
+    rel = os.path.relpath(fpath, TESTSRC_ROOT)
+    modname = os.path.splitext(rel)[0].replace(os.sep, ".")
+    try:
+        spec = importlib.util.spec_from_file_location(modname, fpath)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[modname] = mod
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as e:
+        print(f"IMPORT ERROR: {modname}: {e}")
+        failed_loads.append(modname)
+        if modname in sys.modules:
+            del sys.modules[modname]
+        return None
+
+
+
+
 def reload_tests():
     global failed_loads
     failed_loads.clear()
@@ -87,107 +109,81 @@ def reload_tests():
         sys.path.insert(0, TESTSRC_ROOT)
 
     seen_modules = set()
-
-    # Use recursive glob to find all .py files once
     search_path = os.path.join(TESTSRC_ROOT, "**", "*.py")
-    
     for fpath in glob.glob(search_path, recursive=True):
         fname = os.path.basename(fpath)
-        
         if fname == "__init__.py":
             continue
-            
         if not fname.startswith(TESTLIST_PREFIXES):
             continue
 
+        # module name from relative path
         rel_path = os.path.relpath(fpath, TESTSRC_ROOT)
-        # Normalize path separators to dots
         modname = rel_path.replace(os.sep, ".")[:-3]
-        
-        # Double-check: ensure we don't load a path that ends up being the same module
+
         if modname not in seen_modules:
-            _load_or_reload(modname)
-            if modname in sys.modules:
-                sys.modules[modname].__full_path__ = os.path.abspath(fpath)
+            # Load the module first so decorators populate the registry
+            load_testfile_from_path(fpath)
+
+            # Only set __full_path__ if the module registered itself
+            if modname in apphelpers.testfile_registry:
+                apphelpers.testfile_registry[modname]["__full_path__"] = os.path.abspath(fpath)
+
             seen_modules.add(modname)
 
 
 
-
 def run_registered_test(name, registry, context):
+    # this runs each individual decorated test step
     for test_func in registry:
         if test_func.test_description == name:
             try:
+                # 1. Stop if we are already in an aborted state
+                if context.get("abort"):
+                    return (name, "FAIL", "red", "Aborted due to previous failure", "", 0.00)
+
                 print(f"Running {name}")
                 start_time = time.time()
-                TestrunnerTimer.set_start(name, start_time)
+                
+                # 2. Run the test
                 result = test_func(context)
+
                 duration = time.time() - start_time
-                TestrunnerTimer.set_stop(name, time.time())
-                if len(result) == 3:
-                    success, log_output, stdout_output = result
+                
+                # 3. Unpack result
+                if isinstance(result, tuple):
+                    success = result[0]
+                    log_output = result[1]
+                    stdout_output = result[2] if len(result) == 3 else ""
                 else:
-                    success, log_output = result
-                    stdout_output = ""
-                status = "PASS" if success else "FAIL"
-                color = "green" if success else "red"
+                    success = result # Fallback if test returns a single value
+
+                if context.get("abort") is True:
+                    status = "FAIL"
+                    color = "red"
+                else:
+                    if success:
+                        status = "PASS"
+                        color = "green"
+                    else:
+                        status = "FAIL"
+                        color = "red"
+
             except Exception as e:
                 status = "ERROR"
                 log_output = str(e)
                 stdout_output = ""
                 color = "gray"
                 duration = 0.00
+
             return (name, status, color, log_output, stdout_output, duration)
+
     return (name, "NOT FOUND", "gray", "No matching test found", "", 0.00)
 
 
-
-# def run_testfile(module_name, state=None):
-#     # 1. Clear everything and reload the target module
-#     # This ensures the registries ONLY contain tests from this file
-#     global failed_loads
-#     failed_loads.clear()
-#     apphelpers.clear_registries()
-    
-#     # Reload logic (simplified for the target)
-#     _load_or_reload(module_name)
-
-#     all_tests = []
-#     test_descriptions = []
-    
-#     # 2. Grab everything that was just registered
-#     registry_map = {k.replace("_registry", ""): v 
-#                     for k, v in apphelpers.__dict__.items() 
-#                     if k.endswith("_registry") and isinstance(v, list)}
-
-#     for t_type, registry in registry_map.items():
-#         for f in registry:
-#             desc = getattr(f, "test_description", None)
-#             if desc and f not in all_tests:
-#                 all_tests.append(f)
-#                 test_descriptions.append(desc)
-
-#     if not all_tests:
-#         print(f"FINISHED: No tests found in registries after loading {module_name}")
-#         if state:
-#             state.step, state.test_name = "Done", "No tests found"
-#         return []
-
-#     print(f"Found {len(all_tests)} tests to run.")
-#     context = {"sock": None, "abort": False}
-#     return run_tests(test_descriptions, all_tests, context)
-
-
-
 def run_testfile(module_name, state=None):
-    # 1. Prepare Environment
     global failed_loads
     failed_loads.clear()
-    apphelpers.clear_registries()
-    
-    # We must reload the specific test list module to populate the registries
-    _load_or_reload(module_name)
-    
     meta = apphelpers.testfile_registry.get(module_name)
     if not meta:
         print(f"ERROR: {module_name} not found in testfile_registry")
@@ -195,20 +191,20 @@ def run_testfile(module_name, state=None):
             state.step, state.test_name = "Error", "No registry entry"
         return []
 
+    full_path = meta.get("__full_path__")
+    if not full_path:
+        print(f"ERROR: no __full_path__ for {module_name}")
+        return []
+
+    apphelpers.clear_registries()
+
+    load_testfile_from_path(full_path)
     all_tests = []
     test_descriptions = []
-    
-    # 2. Dynamic Registry Collection
-    # After _load_or_reload, the registries in apphelpers should be populated
-    registry_map = {k.replace("_registry", ""): v 
-                    for k, v in apphelpers.__dict__.items() 
-                    if k.endswith("_registry") and isinstance(v, list)}
 
-    for t_type, registry in registry_map.items():
+    for registry in apphelpers.registry_map.values():
         for f in registry:
             desc = getattr(f, "test_description", None)
-            # We don't filter by __module__ here because clear_registries() 
-            # ensured only the current module's tests are present.
             if desc and f not in all_tests:
                 all_tests.append(f)
                 test_descriptions.append(desc)
@@ -220,12 +216,13 @@ def run_testfile(module_name, state=None):
             state.test_name = "No tests found (Decorators likely commented out)"
         return []
 
+
     print(f"Found {len(all_tests)} tests to run for {module_name}.")
     context = {"sock": None, "abort": False}
 
     # 3. Execution
-    # results = run_tests(test_descriptions, all_tests, context)
     results = run_tests(test_descriptions, all_tests, context, module_name)
+
 
     # 4. Timer Helpers for DB
     def get_start(name):
@@ -293,6 +290,7 @@ def run_tests(test_descriptions, registry, context, module_name):
         progress_state.step_name = test_name
 
         if context.get("abort"):
+            # skip rest of test if the previous loop iteration had abort set
             results.append((test_name, "SKIPPED", "gray", "Skipped", "", 0.00))
             continue
 

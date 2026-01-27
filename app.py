@@ -77,9 +77,9 @@ def testfile_list():
     return jsonify(result)
 
 
-@app.route("/run/<testname>")
+@app.route("/run/<path:testname>")
 def run_named_tests(testname):
-    print(f"run {testname} called") # testname is the reg key
+    print(f"run {testname} called")  # testname is the full module path
 
     progress_state.step = "0/0"
     progress_state.testname = testname
@@ -89,6 +89,7 @@ def run_named_tests(testname):
         res = test_runner.run_testfile(testname, progress_state)
         print(f"Thread finished for {testname}. Results found: {len(res)}")
         progress_state.step = "Done"
+
     threading.Thread(target=run, daemon=True).start()
     return "Started"
 
@@ -129,13 +130,18 @@ def module_path():
 
 @app.route('/clone_as_new')
 def clone_as_new():
-    from newprojecthelper import copybuildtest
+    from newprojecthelper import copybuildtest, copy_sourcedir
     import importlib
     import os
 
     src_module = request.args.get('src_module')
     target_id = request.args.get('target_id')
     target_type = request.args.get('target_type')
+    testlist_name = request.args.get('testlist_name')
+    testfile_name = request.args.get('testfile_name')
+    testfile_targetdir = request.args.get('target_path')
+
+    print("testfile name dwebug: ", testfile_name)
 
     if not all([src_module, target_id, target_type]):
         return jsonify({"status": "error", "message": "Missing parameters"}), 400
@@ -148,68 +154,91 @@ def clone_as_new():
         return jsonify({"status": "error", "message": str(e)}), 500
 
     try:
-        copybuildtest(src_dir, target_id)
+        dest_dir, testlist_file = copybuildtest(
+        src_dir, testfile_name, testlist_name,
+        dest_dir=testfile_targetdir,
+        cmainfile=request.args.get('cmainfile'),
+        testtype=request.args.get('testtype'),
+        archtype=request.args.get('archtype'),
+        platform=request.args.get('platform'),
+        viceconf=request.args.get('viceconf'),
+        linkerconf=request.args.get('linkerconf')
+        )
+
+        copy_sourcedir(src_dir + '/src', dest_dir + '/src')
+
+
         return jsonify({
             "status": "success",
-            "path": f"/testsrc/src/{target_id}",
-            "src_path": src_dir
+            "path": dest_dir,
+            "src_path": src_dir,
+            "testlist_file": testlist_file
         }), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
-
-
 @app.route("/test/<test_id>")
 def test_details(test_id):
+    report_name = request.args.get("report_name")
     test_runner.reload_tests()
 
     matching_tests = []
+    resolved_internal_id = None
+    latest_timestamp = -1
+
     for info in apphelpers.testfile_registry.values():
         test_id_normalized = info.get("id", "").replace(" ", "_")
         if test_id_normalized == test_id:
             test_copy = dict(info)
             test_copy['latest_status'] = {}
-            # for each type, fetch the most recent report status
+            
             for type_name, internal_id in info.get('types', {}).items():
                 all_summaries = db.get_all_reports_summary()
-                # find reports matching this internal_id
                 matching_reports = [
                     r for r in all_summaries
                     if internal_id in os.path.basename(r[0])
+                    and (report_name is None or report_name in os.path.basename(r[0]))
                 ]
+                
                 if matching_reports:
-                    # take the most recent
                     latest = max(matching_reports, key=lambda r: r[3])
-                    test_copy['latest_status'][type_name] = latest[2]  # r[2] is status
+                    test_copy['latest_status'][type_name] = latest[2]
+                    
+                    if latest[3] > latest_timestamp:
+                        latest_timestamp = latest[3]
+                        resolved_internal_id = internal_id
                 else:
                     test_copy['latest_status'][type_name] = None
+            
             matching_tests.append(test_copy)
 
     if not matching_tests:
         return "Test not found", 404
 
-    # single internal_id report filtering
-    internal_id = next(iter(matching_tests[0]['types'].values())) if matching_tests[0].get('types') else None
-
-    latest_summary = db.get_latest_report_summary()
+    internal_id = resolved_internal_id
+    latest_summary = db.get_latest_report_summary(internal_id) if internal_id else []
     all_logs = db.get_failed_steps_log(internal_id) if internal_id else []
+    
     failed_step_names = {step["step_name"] for step in latest_summary if step["status"] == "FAIL"}
-    # keep only logs corresponding to failed steps
     failure_logs = [log for log in all_logs if log.get("name") in failed_step_names]
 
-    reports = [
-        {
-            "filename": os.path.basename(r[0]),
-            "filepath": r[0],
-            "duration": r[1],
-            "status": r[2],
-            "timestamp": r[3]
-        }
-        for r in db.get_all_reports_summary()
-        if internal_id and internal_id in os.path.basename(r[0])
-    ]
+    report_status = "FAIL" if failure_logs else "PASS"
+
+    reports = []
+    if internal_id:
+        all_reports = db.get_all_reports_summary()
+        for r in all_reports:
+            filename = os.path.basename(r[0])
+            if internal_id in filename and (report_name is None or report_name in filename):
+                reports.append({
+                    "filename": filename,
+                    "filepath": r[0],
+                    "duration": r[1],
+                    "status": report_status,
+                    "timestamp": r[3]
+                })
+    
     reports.sort(key=lambda r: r["timestamp"], reverse=True)
     reports = reports[:5]
 
@@ -224,6 +253,31 @@ def test_details(test_id):
     )
 
 
+
+
+# @app.route("/update_test_config", methods=["POST"])
+# def update_test_config():
+#     data = request.json
+#     if not data:
+#         return jsonify({"error": "No JSON payload provided"}), 400
+
+#     pyfile_path = data.get("pyfile_path")
+#     if not pyfile_path or not os.path.isfile(pyfile_path):
+#         return jsonify({"error": f"Invalid file path: {pyfile_path}"}), 400
+
+#     # Call the helper with optional keys from the JSON payload
+#     update_register_metadata(
+#         pyfile_path,
+#         new_projname=data.get("projname"),
+#         new_cmainfile=data.get("cmainfile"),
+#         new_testtype=data.get("testtype"),
+#         new_archtype=data.get("archtype"),
+#         new_platform=data.get("platform"),
+#         new_viceconf=data.get("viceconf"),
+#         new_linkerconf=data.get("linkerconf"),
+#     )
+
+#     return jsonify({"status": "success", "updated_file": pyfile_path})
 
 
 if __name__ == "__main__":

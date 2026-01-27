@@ -72,7 +72,7 @@ class ReportDB:
 
 
 
-    def get_latest_report_summary(self):
+    def get_latest_report_summary(self, target_id=None):
         conn = self._connect()
         cur = conn.cursor()
         cur.execute("SELECT id FROM report ORDER BY id DESC LIMIT 1")
@@ -87,6 +87,9 @@ class ReportDB:
 
         summary = []
         for r in rows:
+            if target_id and r[3] != target_id:
+                continue
+
             step_name = r[4] or "Unnamed Step"
             status_val = r[5].upper() if r[5] else "SKIP"
             duration = f"{r[9]:.2f}" if r[9] is not None else "0.00"
@@ -102,7 +105,7 @@ class ReportDB:
                 "step_name": step_name,
                 "duration": duration,
                 "status": status,
-                "test_id": r[3]  # add test_id here
+                "test_id": r[3]
             })
         return summary
 

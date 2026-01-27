@@ -38,6 +38,37 @@
 </div>
 
 
+<div class="section">
+    <label>3. Edit CONFIG Settings</label>
+
+    <label>Main C File (cmainfile)</label>
+    <input type="text" id="cfg_cmainfile">
+
+    <label>Test Type (testtype)</label>
+    <input type="text" id="cfg_testtype">
+
+    <label>Arch Type (archtype)</label>
+    <input type="text" id="cfg_archtype">
+
+    <label>Platform</label>
+    <input type="text" id="cfg_platform">
+
+    <label>VICE Config (viceconf)</label>
+    <input type="text" id="cfg_viceconf">
+
+    <label>Linker Config (linkerconf)</label>
+    <input type="text" id="cfg_linkerconf">
+
+    <label>Testfile Name</label>
+    <div style="display:flex; align-items:center;">
+        <span style="background:#f0f0f0; padding:8px; border:1px solid #ccc; border-radius:4px 0 0 4px; color:#666;">__testfile__</span>
+        <input type="text" id="cfg_testfile" placeholder="Enter name" style="flex:1; border-left:none; border-radius:0 4px 4px 0; padding:8px; border:1px solid #ccc;">
+    </div>
+</div>
+
+
+
+
     <button onclick="cloneProject()">Execute Clone Operation</button>
 
     <div id="status"></div>
@@ -67,31 +98,47 @@
                 });
         }
 
-        function updateFields() {
+function updateFields() {
     const sel = document.getElementById('testlist');
     const selected = sel.options[sel.selectedIndex];
     const targetIdField = document.getElementById('target_id');
     const targetTypeField = document.getElementById('target_type');
     const pathField = document.getElementById('src_path_display');
-    const targetPathField = document.getElementById('target_path'); // New field
+    const targetPathField = document.getElementById('target_path');
+    const testfileField = document.getElementById('cfg_testfile');
 
     if (selected.value) {
         const newId = selected.dataset.id + '_copy';
         targetIdField.value = newId;
         targetTypeField.value = selected.dataset.primaryType;
 
+        // auto-populate testfile name with source id
+        if (!testfileField.dataset.userEdited) {
+            testfileField.value = selected.dataset.id;
+        }
+
         fetch(`/module_path?src_module=${encodeURIComponent(selected.value)}`)
             .then(r => r.json())
             .then(res => {
                 if (res.status === 'success') {
                     pathField.value = res.src_path;
-                    
-                    // Logic to autopopulate target path based on source path
-                    // This replaces the filename at the end of the path with the new ID
+
                     const pathParts = res.src_path.split(/[\\/]/);
-                    pathParts.pop(); // Remove original filename
+                    pathParts.pop();
                     const separator = res.src_path.includes('\\') ? '\\' : '/';
                     targetPathField.value = pathParts.join(separator) + separator + newId + '/';
+
+                    populateConfigFromSelection({
+                        dataset: {
+                            id: selected.dataset.id,
+                            cmainfile: res.cmainfile || 'main.c',
+                            primaryType: selected.dataset.primaryType,
+                            archtype: res.archtype || 'c64',
+                            platform: res.platform || 'Graphics',
+                            viceconf: res.viceconf || 'vice_nosound.cfg',
+                            linkerconf: res.linkerconf || ''
+                        }
+                    });
                 } else {
                     pathField.value = 'Error: ' + res.message;
                 }
@@ -101,52 +148,131 @@
         targetTypeField.value = '';
         pathField.value = '';
         targetPathField.value = '';
+        if (!testfileField.dataset.userEdited) testfileField.value = '';
+        loadConfigFields({});
     }
 }
+
+// detect user edits to testfile name so auto-populate doesn’t override
+const testfileField = document.getElementById('cfg_testfile');
+testfileField.addEventListener('input', function() {
+    this.dataset.userEdited = true;
+});
+
+
 
 
 function cloneProject() {
     const src_module = document.getElementById('testlist').value;
     const target_id = document.getElementById('target_id').value.trim();
     const target_type = document.getElementById('target_type').value.trim();
-    const target_path = document.getElementById('target_path').value.trim(); // Get the edited path
+    const target_path = document.getElementById('target_path').value.trim();
     const status = document.getElementById('status');
 
-            if (!src_module || !target_id || !target_type) {
-                status.textContent = 'Error: Please select a source and provide a target ID/Type.';
-                status.style.color = 'red';
-                status.style.background = '#fff0f0';
-                return;
-            }
+    if (!src_module || !target_id || !target_type) {
+        status.textContent = 'Error: Please select a source and provide a target ID/Type.';
+        status.style.color = 'red';
+        status.style.background = '#fff0f0';
+        return;
+    }
 
-            status.textContent = 'Initialising clone...';
-            status.style.color = '#555';
-            status.style.background = '#f9f9f9';
+    status.textContent = 'Initialising clone...';
+    status.style.color = '#555';
+    status.style.background = '#f9f9f9';
 
-const params = new URLSearchParams({
+    const payload = {
         src_module: src_module,
         target_id: target_id,
         target_type: target_type,
-        target_path: target_path // Pass it to the backend
+        target_path: target_path,
+        cmainfile: document.getElementById('cfg_cmainfile').value.trim(),
+        testtype: document.getElementById('cfg_testtype').value.trim(),
+        archtype: document.getElementById('cfg_archtype').value.trim(),
+        platform: document.getElementById('cfg_platform').value.trim(),
+        viceconf: document.getElementById('cfg_viceconf').value.trim(),
+        linkerconf: document.getElementById('cfg_linkerconf').value.trim(),
+        testfile_name: document.getElementById('cfg_testfile').value.trim()
+    };
+
+    fetch(`/clone_as_new?${new URLSearchParams(payload)}`)
+        .then(r => r.json())
+        .then(res => {
+            if (res.status === 'success') {
+                document.getElementById('src_path_display').value = res.src_path;
+                status.textContent = 'Success!\nNew test created at: ' + res.path;
+                status.style.color = 'green';
+                status.style.background = '#f0fff0';
+            } else {
+                status.textContent = '✗ Error: ' + res.message;
+                status.style.color = 'red';
+                status.style.background = '#fff0f0';
+            }
+        });
+}
+
+
+
+
+
+function loadConfigFields(config) {
+  //  document.getElementById('cfg_projname').value = config.projname || '';
+    document.getElementById('cfg_cmainfile').value = config.cmainfile || '';
+    document.getElementById('cfg_testtype').value = config.testtype || '';
+    document.getElementById('cfg_archtype').value = config.archtype || '';
+    document.getElementById('cfg_platform').value = config.platform || '';
+    document.getElementById('cfg_viceconf').value = config.viceconf || '';
+    document.getElementById('cfg_linkerconf').value = config.linkerconf || '';
+}
+
+// call this when user selects a test
+function populateConfigFromSelection(selected) {
+    loadConfigFields({
+        projname: selected.dataset.id,
+        cmainfile: selected.dataset.cmainfile || 'main.c',
+        testtype: selected.dataset.primaryType || 'build',
+        archtype: selected.dataset.archtype || 'c64',
+        platform: selected.dataset.platform || 'Graphics',
+        viceconf: selected.dataset.viceconf || 'vice_nosound.cfg',
+        linkerconf: selected.dataset.linkerconf || ''
     });
+}
 
-fetch(`/clone_as_new?${params.toString()}`)
-    .then(r => r.json())
-    .then(res => {
-        if (res.status === 'success') {
-            document.getElementById('src_path_display').value = res.src_path;
-            status.textContent = 'Success!\nNew test created at: ' + res.path;
-            status.style.color = 'green';
-            status.style.background = '#f0fff0';
-        } else {
-            status.textContent = '✗ Error: ' + res.message;
-            status.style.color = 'red';
-            status.style.background = '#fff0f0';
-        }
+// Auto-update backend on edit
+['target_id','cfg_cmainfile','cfg_testtype','cfg_archtype','cfg_platform','cfg_viceconf','cfg_linkerconf'].forEach(id => {
+    document.getElementById(id).addEventListener('change', function() {
+        const pyfile = document.getElementById('target_path').value.trim() + '__testlist__' + document.getElementById('target_id').value.trim() + '.py';
+        if (!pyfile) return;
+
+        const payload = {
+            pyfile_path: pyfile,
+            projname: document.getElementById('target_id').value.trim(),
+            cmainfile: document.getElementById('cfg_cmainfile').value.trim(),
+            testtype: document.getElementById('cfg_testtype').value.trim(),
+            archtype: document.getElementById('cfg_archtype').value.trim(),
+            platform: document.getElementById('cfg_platform').value.trim(),
+            viceconf: document.getElementById('cfg_viceconf').value.trim(),
+            linkerconf: document.getElementById('cfg_linkerconf').value.trim()
+        };
+
+        fetch('/update_test_config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(res => {
+            const status = document.getElementById('status');
+            if (res.status === 'success') {
+                status.textContent = 'CONFIG updated successfully.';
+                status.style.color = 'green';
+            } else {
+                status.textContent = 'Error updating CONFIG: ' + res.message;
+                status.style.color = 'red';
+            }
+        });
     });
+});
 
-
-        }
 
 document.getElementById('target_id').addEventListener('input', function() {
     const targetIdField = this;
