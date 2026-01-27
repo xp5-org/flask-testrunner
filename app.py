@@ -65,6 +65,7 @@ def testfile_list():
 
     result = []
     for modname, info in apphelpers.testfile_registry.items():
+        print(f"DEBUG {modname}: {info['types']}")
         result.append({
             "id": info["id"].replace(" ", "_"),  # internal ID, underscores only
             "display_name": info["id"],          # human-readable
@@ -73,7 +74,7 @@ def testfile_list():
             "system": info.get("system"),
             "platform": info.get("platform")
         })
-        #print("testfile list result debug: ", result)
+        print("testfile list result debug: ", result)
     return jsonify(result)
 
 
@@ -158,7 +159,7 @@ def clone_as_new():
         src_dir, testfile_name, testlist_name,
         dest_dir=testfile_targetdir,
         cmainfile=request.args.get('cmainfile'),
-        testtype=request.args.get('testtype'),
+        testtype=request.args.get('target_type'),
         archtype=request.args.get('archtype'),
         platform=request.args.get('platform'),
         viceconf=request.args.get('viceconf'),
@@ -228,6 +229,7 @@ def test_details(test_id):
     reports = []
     if internal_id:
         all_reports = db.get_all_reports_summary()
+        print(all_reports)
         for r in all_reports:
             filename = os.path.basename(r[0])
             if internal_id in filename and (report_name is None or report_name in filename):
@@ -254,30 +256,6 @@ def test_details(test_id):
 
 
 
-
-# @app.route("/update_test_config", methods=["POST"])
-# def update_test_config():
-#     data = request.json
-#     if not data:
-#         return jsonify({"error": "No JSON payload provided"}), 400
-
-#     pyfile_path = data.get("pyfile_path")
-#     if not pyfile_path or not os.path.isfile(pyfile_path):
-#         return jsonify({"error": f"Invalid file path: {pyfile_path}"}), 400
-
-#     # Call the helper with optional keys from the JSON payload
-#     update_register_metadata(
-#         pyfile_path,
-#         new_projname=data.get("projname"),
-#         new_cmainfile=data.get("cmainfile"),
-#         new_testtype=data.get("testtype"),
-#         new_archtype=data.get("archtype"),
-#         new_platform=data.get("platform"),
-#         new_viceconf=data.get("viceconf"),
-#         new_linkerconf=data.get("linkerconf"),
-#     )
-
-#     return jsonify({"status": "success", "updated_file": pyfile_path})
 
 
 if __name__ == "__main__":

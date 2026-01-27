@@ -17,6 +17,10 @@
 <body>
     <h2>Clone Build Test</h2>
 
+    <select id="system-filter">
+    <option value="all">All</option>
+</select>
+
     <div class="section">
         <label>1. Select Source Test</label>
         <select id="testlist" onchange="updateFields()"></select>
@@ -43,9 +47,9 @@
 
     <label>Main C File (cmainfile)</label>
     <input type="text" id="cfg_cmainfile">
-
+<!-- 
     <label>Test Type (testtype)</label>
-    <input type="text" id="cfg_testtype">
+    <input type="text" id="cfg_testtype"> -->
 
     <label>Arch Type (archtype)</label>
     <input type="text" id="cfg_archtype">
@@ -74,29 +78,72 @@
     <div id="status"></div>
 
     <script>
-        function loadTests() {
-            fetch('/testfile_list')
-                .then(r => r.json())
-                .then(data => {
-                    const sel = document.getElementById('testlist');
-                    sel.innerHTML = '<option value="">-- Select Source Test --</option>';
-                    data.forEach(item => {
-                        if (item.types) {
-                            const typeNames = Object.keys(item.types).join(', ');
-                            const opt = document.createElement('option');
-                            
-                            // Map backend data to the option element
-                            opt.value = item.module; 
-                            opt.dataset.id = item.id;
-                            opt.dataset.path = item.path; // The __full_path__ from sys.modules
-                            opt.dataset.primaryType = Object.keys(item.types)[0] || 'test';
-                            
-                            opt.textContent = `${item.display_name || item.id} [${typeNames}]`;
-                            sel.appendChild(opt);
-                        }
-                    });
-                });
-        }
+let allTestData = [];
+
+function loadTests() {
+    fetch('/testfile_list')
+        .then(r => r.json())
+        .then(data => {
+            allTestData = data;
+            const systemFilter = document.getElementById('system-filter');
+            const systemsSet = new Set();
+            
+            data.forEach(item => {
+                // Use archtype for the System dropdown
+                if (item.system) {
+                    systemsSet.add(item.system);
+                }
+            });
+
+            const sortedSystems = Array.from(systemsSet).sort((a, b) => a.localeCompare(b));
+
+            sortedSystems.forEach(sys => {
+                const opt = document.createElement('option');
+                opt.value = sys;
+                opt.textContent = sys;
+                systemFilter.appendChild(opt);
+            });
+
+            renderTests('all');
+        });
+}
+
+function renderTests(filter) {
+    const sel = document.getElementById('testlist');
+    sel.innerHTML = '<option value="">-- Select Source Test --</option>';
+
+    let filtered = allTestData;
+    if (filter !== 'all') {
+        // Fix: Filter by the .system property, not the .types keys
+        filtered = allTestData.filter(item => item.system === filter);
+    }
+
+    // Sort by item.id (System ID)
+    filtered.sort((a, b) => {
+        const idA = (a.id || "").toLowerCase();
+        const idB = (b.id || "").toLowerCase();
+        return idA.localeCompare(idB);
+    });
+
+    filtered.forEach(item => {
+        const typeNames = item.types ? Object.keys(item.types).join(', ') : 'none';
+        const opt = document.createElement('option');
+        opt.value = item.module;
+        opt.dataset.id = item.id;
+        opt.dataset.path = item.path;
+        
+        // Fix: Ensure primaryType stays a build type (e.g., 'build') 
+        // instead of being overwritten by the system name
+        opt.dataset.primaryType = (item.types && Object.keys(item.types)[0]) || 'build';
+        
+        opt.textContent = `${item.id} [${typeNames}] ${item.display_name ? '('+item.display_name+')' : ''}`;
+        sel.appendChild(opt);
+    });
+}
+
+document.getElementById('system-filter').addEventListener('change', function() {
+    renderTests(this.value);
+});
 
 function updateFields() {
     const sel = document.getElementById('testlist');
@@ -160,8 +207,6 @@ testfileField.addEventListener('input', function() {
 });
 
 
-
-
 function cloneProject() {
     const src_module = document.getElementById('testlist').value;
     const target_id = document.getElementById('target_id').value.trim();
@@ -186,7 +231,7 @@ function cloneProject() {
         target_type: target_type,
         target_path: target_path,
         cmainfile: document.getElementById('cfg_cmainfile').value.trim(),
-        testtype: document.getElementById('cfg_testtype').value.trim(),
+        //testtype: document.getElementById('cfg_testtype').value.trim(),
         archtype: document.getElementById('cfg_archtype').value.trim(),
         platform: document.getElementById('cfg_platform').value.trim(),
         viceconf: document.getElementById('cfg_viceconf').value.trim(),
@@ -211,13 +256,10 @@ function cloneProject() {
 }
 
 
-
-
-
 function loadConfigFields(config) {
   //  document.getElementById('cfg_projname').value = config.projname || '';
     document.getElementById('cfg_cmainfile').value = config.cmainfile || '';
-    document.getElementById('cfg_testtype').value = config.testtype || '';
+   // document.getElementById('cfg_testtype').value = config.testtype || '';
     document.getElementById('cfg_archtype').value = config.archtype || '';
     document.getElementById('cfg_platform').value = config.platform || '';
     document.getElementById('cfg_viceconf').value = config.viceconf || '';
@@ -236,42 +278,6 @@ function populateConfigFromSelection(selected) {
         linkerconf: selected.dataset.linkerconf || ''
     });
 }
-
-// Auto-update backend on edit
-['target_id','cfg_cmainfile','cfg_testtype','cfg_archtype','cfg_platform','cfg_viceconf','cfg_linkerconf'].forEach(id => {
-    document.getElementById(id).addEventListener('change', function() {
-        const pyfile = document.getElementById('target_path').value.trim() + '__testlist__' + document.getElementById('target_id').value.trim() + '.py';
-        if (!pyfile) return;
-
-        const payload = {
-            pyfile_path: pyfile,
-            projname: document.getElementById('target_id').value.trim(),
-            cmainfile: document.getElementById('cfg_cmainfile').value.trim(),
-            testtype: document.getElementById('cfg_testtype').value.trim(),
-            archtype: document.getElementById('cfg_archtype').value.trim(),
-            platform: document.getElementById('cfg_platform').value.trim(),
-            viceconf: document.getElementById('cfg_viceconf').value.trim(),
-            linkerconf: document.getElementById('cfg_linkerconf').value.trim()
-        };
-
-        fetch('/update_test_config', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
-        })
-        .then(r => r.json())
-        .then(res => {
-            const status = document.getElementById('status');
-            if (res.status === 'success') {
-                status.textContent = 'CONFIG updated successfully.';
-                status.style.color = 'green';
-            } else {
-                status.textContent = 'Error updating CONFIG: ' + res.message;
-                status.style.color = 'red';
-            }
-        });
-    });
-});
 
 
 document.getElementById('target_id').addEventListener('input', function() {
