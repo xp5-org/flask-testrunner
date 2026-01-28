@@ -118,7 +118,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 const bgcolor1 = "#f5f5f5";
 const bgcolor2 = "#e0e0e0";
 
-// 1. Define startTest and the Polling logic
 let isPolling = false;
 document.addEventListener("DOMContentLoaded", async () => {
 window.startTest = async (file, displayName, type) => {
@@ -151,8 +150,6 @@ async function pollProgress() {
         const data = await res.json();
 
         if (data.step === "Done") {
-            // Only reload if we were ACTIVE (isPolling is true)
-            // If we just loaded the page and it says Done, isPolling is false, so we just show Idle.
             if (isPolling) {
                 statusEl.textContent = "Progress: Complete - Updating tables...";
                 isPolling = false;
@@ -163,10 +160,15 @@ async function pollProgress() {
             return;
         }
 
+        // Check for specific non-idle steps
         if (data.step !== "Idle") {
-            // If we see a progress string (like "1/5"), we are now officially polling
             isPolling = true;
-            statusEl.textContent = `Progress: ${data.step} - ${data.testname} - ${data.test_step}`;
+            // FIXED: status.innerText changed to statusEl.textContent
+            statusEl.textContent = `Progress: ${data.step} - ${data.testid} 
+                - ${data.step_name} 
+                - (${data.testtype}) 
+                - ${data.testname}`;
+            
             setTimeout(pollProgress, 2000);
         } else {
             statusEl.textContent = "Progress: Idle";
@@ -174,9 +176,12 @@ async function pollProgress() {
         }
     } catch (e) {
         console.error("Polling error:", e);
+        // Retry later if the server is temporarily unreachable
         setTimeout(pollProgress, 5000); 
     }
 }
+
+
 pollProgress(); 
 });
 document.addEventListener("DOMContentLoaded", async () => {

@@ -55,7 +55,7 @@ def cloneproj():
 def failedtestsinfo():
     test_runner.reload_tests()
     # gets test modules which failed to load
-    print("failed loads1: ", test_runner.failed_loads)
+    print("failed loads: ", test_runner.failed_loads)
     return jsonify(test_runner.failed_loads)
 
 
@@ -65,22 +65,20 @@ def testfile_list():
 
     result = []
     for modname, info in apphelpers.testfile_registry.items():
-        print(f"DEBUG {modname}: {info['types']}")
         result.append({
-            "id": info["id"].replace(" ", "_"),  # internal ID, underscores only
-            "display_name": info["id"],          # human-readable
+            "id": info["id"],
+            "display_name": info["id"],
             "module": modname,
             "types": info["types"],
             "system": info.get("system"),
             "platform": info.get("platform")
         })
-        print("testfile list result debug: ", result)
     return jsonify(result)
 
 
 @app.route("/run/<path:testname>")
 def run_named_tests(testname):
-    print(f"run {testname} called")  # testname is the full module path
+    print(f"run {testname} called")
 
     progress_state.step = "0/0"
     progress_state.testname = testname
@@ -100,6 +98,8 @@ def progress():
     return jsonify({
         "step": progress_state.step,
         "testname": progress_state.testname,
+        "testid": progress_state.testid,
+        "testtype": progress_state.testtype,
         "step_name": progress_state.step_name
     })
 
@@ -142,7 +142,7 @@ def clone_as_new():
     testfile_name = request.args.get('testfile_name')
     testfile_targetdir = request.args.get('target_path')
 
-    print("testfile name dwebug: ", testfile_name)
+    #print("testfile name dwebug: ", testfile_name)
 
     if not all([src_module, target_id, target_type]):
         return jsonify({"status": "error", "message": "Missing parameters"}), 400
@@ -179,77 +179,62 @@ def clone_as_new():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+
 @app.route("/test/<test_id>")
 def test_details(test_id):
     report_name = request.args.get("report_name")
     test_runner.reload_tests()
 
     matching_tests = []
-    resolved_internal_id = None
-    latest_timestamp = -1
+    # all_summaries = db.get_all_reports_summary()
+    all_summaries = db.get_all_reports_summary(test_parent_name=test_id)
+
 
     for info in apphelpers.testfile_registry.values():
-        test_id_normalized = info.get("id", "").replace(" ", "_")
-        if test_id_normalized == test_id:
-            test_copy = dict(info)
-            test_copy['latest_status'] = {}
-            
-            for type_name, internal_id in info.get('types', {}).items():
-                all_summaries = db.get_all_reports_summary()
-                matching_reports = [
-                    r for r in all_summaries
-                    if internal_id in os.path.basename(r[0])
-                    and (report_name is None or report_name in os.path.basename(r[0]))
-                ]
-                
-                if matching_reports:
-                    latest = max(matching_reports, key=lambda r: r[3])
-                    test_copy['latest_status'][type_name] = latest[2]
-                    
-                    if latest[3] > latest_timestamp:
-                        latest_timestamp = latest[3]
-                        resolved_internal_id = internal_id
-                else:
-                    test_copy['latest_status'][type_name] = None
-            
-            matching_tests.append(test_copy)
+        if info.get("id", "") != test_id:
+            continue
+
+        test_copy = dict(info)
+        test_copy['latest_status'] = {}
+
+        for type_name in info.get('types', {}):
+            failed_steps = db.get_failed_steps_log(test_id, type_name)
+            test_copy['latest_status'][type_name] = 'FAIL' if failed_steps else 'PASS'
+
+        matching_tests.append(test_copy)
+
 
     if not matching_tests:
         return "Test not found", 404
 
-    internal_id = resolved_internal_id
-    latest_summary = db.get_latest_report_summary(internal_id) if internal_id else []
-    all_logs = db.get_failed_steps_log(internal_id) if internal_id else []
-    
-    failed_step_names = {step["step_name"] for step in latest_summary if step["status"] == "FAIL"}
-    failure_logs = [log for log in all_logs if log.get("name") in failed_step_names]
-
-    report_status = "FAIL" if failure_logs else "PASS"
+    latest_summary = db.get_latest_report_summary(test_id)
+    failure_logs = db.get_failed_steps_log(test_id)
 
     reports = []
-    if internal_id:
-        all_reports = db.get_all_reports_summary()
-        print(all_reports)
-        for r in all_reports:
-            filename = os.path.basename(r[0])
-            if internal_id in filename and (report_name is None or report_name in filename):
-                reports.append({
-                    "filename": filename,
-                    "filepath": r[0],
-                    "duration": r[1],
-                    "status": report_status,
-                    "timestamp": r[3]
-                })
-    
+    for r in all_summaries:
+        filename = os.path.basename(r[0])
+        if report_name is None or report_name in filename:
+            reports.append({
+                "filename": filename,
+                "filepath": r[0],
+                "duration": r[1],
+                "status": r[2],
+                "timestamp": r[3]
+            })
+
+
+
     reports.sort(key=lambda r: r["timestamp"], reverse=True)
     reports = reports[:5]
 
+    #print("FAILESTEPS DEBUG: ", failure_logs)
+    #print("REPORTSDEBUG: ", reports)
     return render_template(
         "test_detail.html",
         testname=test_id,
         test_info=matching_tests,
         reports=reports,
-        internal_id=internal_id,
+        internal_id=test_id,
         latest_summary=latest_summary,
         failure_logs=failure_logs
     )

@@ -21,7 +21,7 @@
 <script>
 let isPolling = false;
 
-// 1. Function triggered by the Run button
+
 async function runTest(internalName) {
     const status = document.getElementById("progress-status");
     status.textContent = `Progress: Starting ${internalName}...`;
@@ -30,7 +30,6 @@ async function runTest(internalName) {
         const r = await fetch(`/run/${encodeURIComponent(internalName)}`);
         if (!r.ok) throw new Error("Failed to start test");
         
-        // Start polling if not already active
         if (!isPolling) {
             isPolling = true;
             poll();
@@ -41,7 +40,6 @@ async function runTest(internalName) {
     }
 }
 
-// 2. The recursive polling logic
 async function poll() {
     const status = document.getElementById("progress-status");
 
@@ -62,8 +60,12 @@ async function poll() {
         }
 
         if (data.step !== "Idle") {
-            isPolling = true; // We found an active test (on load or after click)
-            status.textContent = `Progress: ${data.step} - ${data.test_name}`;
+            isPolling = true;
+             status.innerText = `Progress: ${data.step} - ${data.testid}
+            - ${data.step_name}
+             - (${data.testtype})
+             - ${data.testname}`;
+
             setTimeout(poll, 2000);
         } else {
             status.textContent = "Progress: Idle";
@@ -75,7 +77,7 @@ async function poll() {
     }
 }
 
-// 3. Start polling immediately when the page opens
+// polling immediately when the page opens
 document.addEventListener("DOMContentLoaded", () => {
     poll();
 });
@@ -91,7 +93,6 @@ document.addEventListener("DOMContentLoaded", () => {
 <h1>Test Details: {{ testname }}</h1>
 <p id="progress-status">Progress: Idle</p>
 
-<!-- Buttons section split: left-half tiled -->
 <div class="grid-buttons">
     {% for test in test_info %}
         {% for type, internal in test.types.items() %}
@@ -101,9 +102,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 <div><strong>System:</strong> {{ test.system or 'N/A' }}</div>
                 <div><strong>Platform:</strong> {{ test.platform or 'N/A' }}</div>
                 <div><strong>Status:</strong> {{ status or 'N/A' }}</div>
-                <!-- <div><small>{{ type }}</small></div> -->
-                <!-- <button onclick="runTest('{{ internal }}')">Run</button> -->
-                <!-- <button onclick="runTest({{ internal|tojson }})">{{ type }}</button> -->
                 <button onclick="runTest('{{ internal }}')">{{ type }}</button>
             </div>
         {% endfor %}
@@ -113,25 +111,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 </div>
-{% if latest_summary %}
-<!-- <h2>Most Recent Test Steps</h2> -->
-
 {% if failure_logs %}
     <h3>Recent Non-Passing Steps</h3>
     <div class="failure-log-list">
         {% for log in failure_logs %}
             <div class="log-item" style="border-left: 4px solid red; padding-left: 10px; margin-bottom: 15px;">
-                <strong>Step:</strong> {{ log.name }}
+                <strong>Test:</strong> {{ log.testparentname }} ({{ log.test_type }})<br>
+                <strong>Step:</strong> {{ log.name }}<br>
+                {% if log.get('output') %}
                 <pre style="background: #1e1e1e; color: #d4d4d4; padding: 10px; overflow-x: auto;">{{ log.output }}</pre>
+                {% endif %}
             </div>
         {% endfor %}
     </div>
 {% endif %}
+
+
 {% if latest_summary %}
 <table>
     <thead>
         <tr>
-            <th colspan="4">Most Recent: {{ latest_summary[0].test_id.split('.')[-1] }}</th>
+            <th colspan="3">Most Recent: {{ latest_summary[0].test_id.split('.')[-1] }}</th>
         </tr>
         <tr>
             <th>Step</th>
@@ -149,12 +149,15 @@ document.addEventListener("DOMContentLoaded", () => {
     {% endfor %}
     </tbody>
 </table>
-{% endif %}
-
-
 {% else %}
 <p>No recent test steps available.</p>
 {% endif %}
+
+
+
+
+
+
 <h2>Reports</h2>
 {% if reports %}
 <table>

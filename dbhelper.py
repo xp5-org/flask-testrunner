@@ -43,6 +43,8 @@ class ReportDB:
                 report_id INTEGER,
                 test_index INTEGER,
                 test_id TEXT,
+                testparentname TEXT,
+                test_types TEXT,
                 name TEXT,
                 status TEXT,
                 color TEXT,
@@ -71,9 +73,9 @@ class ReportDB:
         return rows
 
 
-
     def get_latest_report_summary(self, target_id=None):
         conn = self._connect()
+        conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         cur.execute("SELECT id FROM report ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
@@ -81,82 +83,114 @@ class ReportDB:
             conn.close()
             return []
 
-        latest_report_id = row[0]
-        rows = self.fetch_results_for_report(latest_report_id)
+        latest_report_id = row["id"]
+        cur.execute("SELECT * FROM test_result WHERE report_id = ?", (latest_report_id,))
+        rows = cur.fetchall()
         conn.close()
 
         summary = []
         for r in rows:
-            if target_id and r[3] != target_id:
+            if target_id and r["test_id"] != target_id:
                 continue
 
-            step_name = r[4] or "Unnamed Step"
-            status_val = r[5].upper() if r[5] else "SKIP"
-            duration = f"{r[9]:.2f}" if r[9] is not None else "0.00"
+            step_name = r["name"] or "Unnamed Step"
+            status_raw = r["status"].upper() if r["status"] else "SKIP"
+            duration_val = f"{r['duration']:.2f}" if r["duration"] is not None else "0.00"
 
-            if "PASS" in status_val:
+            if "PASS" in status_raw:
                 status = "PASS"
-            elif "FAIL" in status_val:
+            elif "FAIL" in status_raw:
                 status = "FAIL"
             else:
                 status = "SKIP"
 
             summary.append({
                 "step_name": step_name,
-                "duration": duration,
+                "duration": duration_val,
                 "status": status,
-                "test_id": r[3]
+                "test_id": r["test_id"],
+                "types": r["test_types"]
             })
+
         return summary
 
 
-    def get_failed_steps_log(self, internal_id):
-            conn = self._connect()
-            cur = conn.cursor()
-            
-            cur.execute("""
-                SELECT MAX(report_id) 
-                FROM test_result 
-                WHERE test_id = ?
-            """, (internal_id,))
-            res = cur.fetchone()
-            
-            if not res or res[0] is None:
-                conn.close()
-                return []
-                
-            latest_id_for_test = res[0]
-
-            cur.execute("""
-                SELECT name, output 
-                FROM test_result 
-                WHERE report_id = ? AND status != 'PASS'
-                ORDER BY test_index ASC
-            """, (latest_id_for_test,))
-            
-            rows = cur.fetchall()
-            conn.close()
-            return [{"name": r[0], "output": r[1]} for r in rows]
-
-
-
-    def get_all_reports_summary(self):
+    def get_failed_steps_log(self, testparentname, test_types="*"):
         conn = self._connect()
         cur = conn.cursor()
+        # name = name of test step
+        # test_types = build/run test type
+        # testparentname = primary key to find a test
+        # testparentname + test_type = find a specific test
+
+
+        sql = "SELECT MAX(report_id) FROM test_result WHERE testparentname = ?"
+        params = [testparentname]
+
+        if test_types != "*":
+            sql += " AND test_types = ?"
+            params.append(test_types)
+
+        cur.execute(sql, tuple(params))
+        res = cur.fetchone()
+
+        if not res or res[0] is None:
+            conn.close()
+            return []
+
+        latest_id_for_test = res[0]
+
         cur.execute("""
+            SELECT testparentname, test_types, name, output
+            FROM test_result
+            WHERE report_id = ? AND status != 'PASS'
+            ORDER BY test_index ASC
+        """, (latest_id_for_test,))
+
+        rows = cur.fetchall()
+        conn.close()
+
+        results = [
+            {
+                "testparentname": r[0],
+                "test_type": r[1],
+                "name": r[2],
+                "output": r[3]
+            }
+            for r in rows
+        ]
+        #print("SQLDEBUG: ", results)
+        return results
+
+
+    def get_all_reports_summary(self, test_parent_name=None):
+        conn = self._connect()
+        cur = conn.cursor()
+        
+        query = """
             SELECT 
                 r.path,
                 SUM(tr.duration) as total_duration,
                 CASE WHEN MIN(tr.status) = 'FAIL' THEN 'FAIL' ELSE 'PASS' END as overall_status,
                 MIN(tr.start_time) as report_start
             FROM report r
-            JOIN test_result tr ON r.id = tr.report_id
+            LEFT JOIN test_result tr ON r.id = tr.report_id
+        """
+        
+        params = []
+        if test_parent_name:
+            query += " WHERE tr.testparentname = ?"
+            params.append(test_parent_name)
+            
+        query += """
             GROUP BY r.id, r.path
             ORDER BY r.id DESC
-        """)
+        """
+        
+        cur.execute(query, params)
         rows = cur.fetchall()
         conn.close()
-        #return [(r[0], str(r[1]), r[2].upper() if r[2] else "", r[3]) for r in rows]
+        
         return [(r[0], f"{r[1]:.2f}" if r[1] is not None else "0.00", r[2].upper() if r[2] else "", r[3]) for r in rows]
 
    
@@ -182,6 +216,8 @@ class ReportDB:
                 report_id INTEGER,
                 test_index INTEGER,
                 test_id TEXT,
+                testparentname TEXT,
+                test_types TEXT,
                 name TEXT,
                 status TEXT,
                 color TEXT,
@@ -197,7 +233,8 @@ class ReportDB:
         conn.commit()
         conn.close()
 
-    def populate_sqlite(self, test_id, results, html_report_path, total_duration=0.00, get_start=None, get_stop=None):
+
+    def populate_sqlite(self, test_id, testparentname, test_types, results, html_report_path, total_duration=0.00, get_start=None, get_stop=None):
         subdir_path = os.path.dirname(html_report_path)
         screenshot_map = defaultdict(list)
         for fname in os.listdir(subdir_path):
@@ -209,6 +246,8 @@ class ReportDB:
 
         conn = self._connect()
         cur = conn.cursor()
+
+        #print("TYPES DEBUG: ", test_types)
 
         try:
             cur.execute("ALTER TABLE report ADD COLUMN total_duration REAL")
@@ -230,13 +269,15 @@ class ReportDB:
             cur.execute(
                 """
                 INSERT INTO test_result
-                (report_id, test_index, test_id, name, status, color, output, stdout, duration, start_time, stop_time, screenshot)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (report_id, test_index, test_id, testparentname, test_types, name, status, color, output, stdout, duration, start_time, stop_time, screenshot)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report_id,
                     idx,
                     test_id,
+                    testparentname,
+                    test_types,
                     name,
                     status,
                     color,
@@ -276,6 +317,4 @@ class ReportDB:
                 "timestamp": os.path.dirname(filepath)
             })
         return reports
-
-
 

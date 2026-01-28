@@ -21,17 +21,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 compile_logs_dir = os.path.join(BASE_DIR, "compile_logs")
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
-
-
-
 TESTSRC_ROOT = "/testsrc/sourcedir"
+
+failed_loads = []
+import importlib.util
 
 root_parent = os.path.dirname(TESTSRC_ROOT)
 if root_parent not in sys.path:
     sys.path.insert(0, root_parent)
     
-
-
 context = {
     "sock": None,
     "abort": False
@@ -61,24 +59,7 @@ class TestrunnerTimer:
         return cls.stop_times.get(test_name)
 
 
-failed_loads = []
 
-def _load_or_reload(modname):
-    global failed_loads
-    try:
-        if modname in sys.modules:
-            importlib.reload(sys.modules[modname])
-        else:
-            importlib.import_module(modname)
-    except Exception as e:
-        # only log 'module' failure
-        print(f"Failed to load {modname}: {e}")
-        if modname not in failed_loads:
-            failed_loads.append(modname)
-
-
-
-import importlib.util
 
 def load_testfile_from_path(fpath):
     global failed_loads
@@ -96,8 +77,6 @@ def load_testfile_from_path(fpath):
         if modname in sys.modules:
             del sys.modules[modname]
         return None
-
-
 
 
 def reload_tests():
@@ -130,7 +109,6 @@ def reload_tests():
                 apphelpers.testfile_registry[modname]["__full_path__"] = os.path.abspath(fpath)
 
             seen_modules.add(modname)
-
 
 
 def run_registered_test(name, registry, context):
@@ -190,6 +168,27 @@ def run_testfile(module_name, state=None):
         if state:
             state.step, state.test_name = "Error", "No registry entry"
         return []
+    
+
+    mod = sys.modules.get(module_name)
+    if mod and hasattr(mod, "CONFIG"):
+        config = mod.CONFIG
+        if state:
+            state.testid = config.get("testname", "")   # human-friendly name
+            state.testtype = config.get("testtype", "") # button label / type info
+            state.testname = module_name                # dot path
+
+    
+    # Get the dictionary: {'build': '...'}
+    raw_types = meta.get("types", {})
+
+    # Extract just the keys (e.g., "build")
+    if isinstance(raw_types, dict):
+        test_types = ", ".join(raw_types.keys())
+    elif isinstance(raw_types, list):
+        test_types = ", ".join(raw_types)
+    else:
+        test_types = str(raw_types)
 
     full_path = meta.get("__full_path__")
     if not full_path:
@@ -245,9 +244,19 @@ def run_testfile(module_name, state=None):
     report_path = os.path.join(subdir_path, f"{module_name}.html")
     generate_report(results, report_path, testlist_name=module_name)
 
+    # get test-name from the config registry
+    mod = sys.modules.get(module_name)
+    if not mod or not hasattr(mod, "CONFIG"):
+        print(f"ERROR: CONFIG not found in {module_name}")
+        return []
+
+    config_testparentname = mod.CONFIG.get("testname")
+
     # 6. Database Population
     db.populate_sqlite(
         test_id=module_name,
+        testparentname=config_testparentname,
+        test_types=test_types,
         results=[(n, s, c, o, out, d) for n, s, c, o, out, d in results],
         html_report_path=report_path,
         total_duration=total_suite_duration,
@@ -260,7 +269,6 @@ def run_testfile(module_name, state=None):
         state.test_name = ""
 
     return results
-
 
 
 def run_tests(test_descriptions, registry, context, module_name):
@@ -279,18 +287,19 @@ def run_tests(test_descriptions, registry, context, module_name):
     total = len(unique_tests)
     if total == 0:
         progress_state.step = "0/0"
-        progress_state.testname = ""
+        progress_state.testname = "asddassd"
         progress_state.step_name = "No tests found"
         return []
 
     for index, test_func in enumerate(unique_tests, start=1):
         test_name = getattr(test_func, "test_description", test_func.__name__)
         progress_state.step = f"{index}/{total}"
-        progress_state.testname = module_name
         progress_state.step_name = test_name
+        progress_state.testname = module_name        # dot path
+        progress_state.testid = progress_state.testid or test_name  # human-friendly name
+        progress_state.testtype = progress_state.testtype or getattr(test_func, "testtype", "")
 
         if context.get("abort"):
-            # skip rest of test if the previous loop iteration had abort set
             results.append((test_name, "SKIPPED", "gray", "Skipped", "", 0.00))
             continue
 
@@ -298,17 +307,16 @@ def run_tests(test_descriptions, registry, context, module_name):
         if result:
             results.append(result)
 
+
     progress_state.step = f"{total}/{total}"
     progress_state.testname = ""
     progress_state.step_name = "Done"
     return results
 
 
-
-
 def generate_report(results, report_path, testlist_name=""):
     subdir_path = os.path.dirname(report_path)
-    print(f"Creating directory: '{subdir_path}'")
+   # print(f"Creating directory: '{subdir_path}'")
     if subdir_path and not os.path.exists(subdir_path):
         os.makedirs(subdir_path, exist_ok=True)
 
@@ -322,7 +330,7 @@ def generate_report(results, report_path, testlist_name=""):
         if (re.match(r"test\d+\.(png|ppm|gif)$", filename) or
             filename.startswith("screenshot-")):
             shutil.move(os.path.join(REPORT_DIR, filename), subdir_path)
-            print("moved image to ", REPORT_DIR, filename)
+           # print("moved image to ", REPORT_DIR, filename)
 
     # Collect screenshots by integer test step
     screenshot_map = defaultdict(list)

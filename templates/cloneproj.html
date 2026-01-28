@@ -47,9 +47,6 @@
 
     <label>Main C File (cmainfile)</label>
     <input type="text" id="cfg_cmainfile">
-<!-- 
-    <label>Test Type (testtype)</label>
-    <input type="text" id="cfg_testtype"> -->
 
     <label>Arch Type (archtype)</label>
     <input type="text" id="cfg_archtype">
@@ -132,8 +129,6 @@ function renderTests(filter) {
         opt.dataset.id = item.id;
         opt.dataset.path = item.path;
         
-        // Fix: Ensure primaryType stays a build type (e.g., 'build') 
-        // instead of being overwritten by the system name
         opt.dataset.primaryType = (item.types && Object.keys(item.types)[0]) || 'build';
         
         opt.textContent = `${item.id} [${typeNames}] ${item.display_name ? '('+item.display_name+')' : ''}`;
@@ -257,9 +252,7 @@ function cloneProject() {
 
 
 function loadConfigFields(config) {
-  //  document.getElementById('cfg_projname').value = config.projname || '';
     document.getElementById('cfg_cmainfile').value = config.cmainfile || '';
-   // document.getElementById('cfg_testtype').value = config.testtype || '';
     document.getElementById('cfg_archtype').value = config.archtype || '';
     document.getElementById('cfg_platform').value = config.platform || '';
     document.getElementById('cfg_viceconf').value = config.viceconf || '';

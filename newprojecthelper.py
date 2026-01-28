@@ -3,8 +3,6 @@ import re
 import importlib
 import os
 
-
-
 #######################################
 ### config stuff #####################
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -14,6 +12,8 @@ TESTSRC_HELPERDIR = "/testsrc/helpers"
 TESTSRC_TESTLISTDIR = "/testsrc/sourcedir/projecta/__testlist__mytestlist.py"
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
 #######################################
+basic_lines = []
+
 
 
 
@@ -81,20 +81,15 @@ def copy_sourcedir(src_path, dst_path):
     shutil.copytree(src_path, dst_path)
 
 
-
-
 def update_register_metadata(pyfile_path, new_projname=None, new_projdirname=None, new_cmainfile=None,
                              new_testtype=None, new_archtype=None, new_platform=None,
                              new_viceconf=None, new_linkerconf=None):
     with open(pyfile_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-
-
-    # mapping of CONFIG keys to new values
     updates = {
-        "projname": new_projname,
-        "projdirname": new_projdirname,
+        "testname": new_projname,
+        "projdir": new_projdirname,
         "cmainfile": new_cmainfile,
         "testtype": new_testtype,
         "archtype": new_archtype,
@@ -102,9 +97,6 @@ def update_register_metadata(pyfile_path, new_projname=None, new_projdirname=Non
         "viceconf": new_viceconf,
         "linkerconf": new_linkerconf,
     }
-
-    # print("update to file conf called: ", updates)
-
     for key, new_val in updates.items():
         if new_val is not None:
             # regex matches: "key": "value" (with optional whitespace)
@@ -115,7 +107,3 @@ def update_register_metadata(pyfile_path, new_projname=None, new_projdirname=Non
     with open(pyfile_path, "w", encoding="utf-8") as f:
         f.write(content)
 
-
-
-
-basic_lines = []
