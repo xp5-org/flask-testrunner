@@ -286,11 +286,13 @@ def run_tests(test_descriptions, registry, context, module_name):
 
     total = len(unique_tests)
     if total == 0:
+        # reset only these vars at start to explicity set zero/none vals
         progress_state.step = "0/0"
-        progress_state.testname = "asddassd"
+        progress_state.testname = ""
         progress_state.step_name = "No tests found"
         return []
 
+    # append steps during testrun
     for index, test_func in enumerate(unique_tests, start=1):
         test_name = getattr(test_func, "test_description", test_func.__name__)
         progress_state.step = f"{index}/{total}"
@@ -307,10 +309,14 @@ def run_tests(test_descriptions, registry, context, module_name):
         if result:
             results.append(result)
 
-
-    progress_state.step = f"{total}/{total}"
+    # reset to null after test run completes
+    # progress_state.step = f"{total}/{total}"
+    progress_state.step = "Idle"
     progress_state.testname = ""
-    progress_state.step_name = "Done"
+    progress_state.step_name = ""
+    progress_state.testname = ""
+    progress_state.testtype = ""
+    progress_state.testid = ""
     return results
 
 
@@ -330,7 +336,6 @@ def generate_report(results, report_path, testlist_name=""):
         if (re.match(r"test\d+\.(png|ppm|gif)$", filename) or
             filename.startswith("screenshot-")):
             shutil.move(os.path.join(REPORT_DIR, filename), subdir_path)
-           # print("moved image to ", REPORT_DIR, filename)
 
     # Collect screenshots by integer test step
     screenshot_map = defaultdict(list)

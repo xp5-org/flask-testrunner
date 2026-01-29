@@ -143,8 +143,9 @@ class ReportDB:
         cur.execute("""
             SELECT testparentname, test_types, name, output
             FROM test_result
-            WHERE report_id = ? AND status != 'PASS'
+            WHERE report_id = ? AND status = 'FAIL'
             ORDER BY test_index ASC
+
         """, (latest_id_for_test,))
 
         rows = cur.fetchall()
@@ -159,7 +160,6 @@ class ReportDB:
             }
             for r in rows
         ]
-        #print("SQLDEBUG: ", results)
         return results
 
 
@@ -167,11 +167,15 @@ class ReportDB:
         conn = self._connect()
         cur = conn.cursor()
         
+        # match fail & error and return fail
         query = """
             SELECT 
                 r.path,
                 SUM(tr.duration) as total_duration,
-                CASE WHEN MIN(tr.status) = 'FAIL' THEN 'FAIL' ELSE 'PASS' END as overall_status,
+                CASE 
+                    WHEN MIN(tr.status) IN ('FAIL', 'ERROR') THEN 'FAIL' 
+                    ELSE 'PASS' 
+                END as overall_status,
                 MIN(tr.start_time) as report_start
             FROM report r
             LEFT JOIN test_result tr ON r.id = tr.report_id
@@ -193,7 +197,6 @@ class ReportDB:
         
         return [(r[0], f"{r[1]:.2f}" if r[1] is not None else "0.00", r[2].upper() if r[2] else "", r[3]) for r in rows]
 
-   
 
     def init_report_db(self):
         db_dir = os.path.dirname(DB_PATH)
@@ -246,8 +249,6 @@ class ReportDB:
 
         conn = self._connect()
         cur = conn.cursor()
-
-        #print("TYPES DEBUG: ", test_types)
 
         try:
             cur.execute("ALTER TABLE report ADD COLUMN total_duration REAL")
@@ -317,4 +318,56 @@ class ReportDB:
                 "timestamp": os.path.dirname(filepath)
             })
         return reports
+    
 
+    def get_latest_namedteststatus(self, testparentname=None):
+        #each testparaentname might have multiple test_types
+        #so parentname + test_type = unique test key
+        #each unique test run of that combo has its own reportid 
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        query = """
+        SELECT t1.testparentname, t1.test_id, t1.test_types, t1.status 
+        FROM test_result t1
+        WHERE t1.report_id = (
+            SELECT MAX(t2.report_id) 
+            FROM test_result t2 
+            WHERE t2.testparentname = t1.testparentname 
+            AND t2.test_types = t1.test_types
+        )
+        """
+        params = []
+
+        if testparentname:
+            query += " AND t1.testparentname = ?"
+            params.append(testparentname)
+
+        cur.execute(query, params)
+        rows = cur.fetchall()
+        conn.close()
+
+        results = {}
+        for r in rows:
+            test_id = r["test_id"]
+            types = r["test_types"]
+            parent_name = r["testparentname"]
+            status_raw = r["status"].upper() if r["status"] else "None"
+
+            dict_key = (test_id, types)
+
+            if dict_key not in results:
+                results[dict_key] = {
+                    "testparentname": parent_name,
+                    "test_id": test_id,
+                    "types": types,
+                    "status": "None"
+                }
+
+            if status_raw == "FAIL" or status_raw == "ERROR":
+                results[dict_key]["status"] = "FAIL"
+            elif status_raw == "PASS" and results[dict_key]["status"] != "FAIL":
+                results[dict_key]["status"] = "PASS"
+
+        return list(results.values())

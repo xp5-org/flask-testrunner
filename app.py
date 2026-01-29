@@ -78,8 +78,11 @@ def testfile_list():
 
 @app.route("/run/<path:testname>")
 def run_named_tests(testname):
-    print(f"run {testname} called")
+    if progress_state.testname:
+        print("ERROR ALREADY RUNNING")
+        return "Error: test already running", 400
 
+    print(f"run {testname} called")
     progress_state.step = "0/0"
     progress_state.testname = testname
 
@@ -88,6 +91,7 @@ def run_named_tests(testname):
         res = test_runner.run_testfile(testname, progress_state)
         print(f"Thread finished for {testname}. Results found: {len(res)}")
         progress_state.step = "Done"
+        progress_state.testname = None
 
     threading.Thread(target=run, daemon=True).start()
     return "Started"
@@ -142,8 +146,6 @@ def clone_as_new():
     testfile_name = request.args.get('testfile_name')
     testfile_targetdir = request.args.get('target_path')
 
-    #print("testfile name dwebug: ", testfile_name)
-
     if not all([src_module, target_id, target_type]):
         return jsonify({"status": "error", "message": "Missing parameters"}), 400
 
@@ -168,7 +170,6 @@ def clone_as_new():
 
         copy_sourcedir(src_dir + '/src', dest_dir + '/src')
 
-
         return jsonify({
             "status": "success",
             "path": dest_dir,
@@ -179,34 +180,51 @@ def clone_as_new():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
 @app.route("/test/<test_id>")
 def test_details(test_id):
     report_name = request.args.get("report_name")
     test_runner.reload_tests()
-
-    matching_tests = []
-    # all_summaries = db.get_all_reports_summary()
     all_summaries = db.get_all_reports_summary(test_parent_name=test_id)
 
+    # test status for buttons
+    # returns testparentname, testtype, status
+    latest_summary = db.get_latest_namedteststatus(test_id)
+    summary_by_type = {}
+    for s in latest_summary:
+        if s["testparentname"] != test_id:
+            continue
 
+        summary_types = s["types"]
+        if isinstance(summary_types, str):
+            summary_types = [summary_types]
+
+        for type_name in summary_types:
+            summary_by_type.setdefault(type_name, []).append(s)
+    
+    # search for failed test-steps from the testparentname
+    matching_tests = []
     for info in apphelpers.testfile_registry.values():
-        if info.get("id", "") != test_id:
+        if info.get("id") != test_id:
             continue
 
         test_copy = dict(info)
-        test_copy['latest_status'] = {}
+        test_copy["latest_status"] = {}
+        for type_name in info.get("types", {}):
+            type_summary = summary_by_type.get(type_name, [])
 
-        for type_name in info.get('types', {}):
-            failed_steps = db.get_failed_steps_log(test_id, type_name)
-            test_copy['latest_status'][type_name] = 'FAIL' if failed_steps else 'PASS'
+            if not type_summary:
+                test_copy["latest_status"][type_name] = None
+            elif any(s["status"] == "FAIL" for s in type_summary):
+                test_copy["latest_status"][type_name] = "FAIL"
+            else:
+                test_copy["latest_status"][type_name] = "PASS"
 
         matching_tests.append(test_copy)
-
 
     if not matching_tests:
         return "Test not found", 404
 
+     # build list of report statuses with matching testparentname
     latest_summary = db.get_latest_report_summary(test_id)
     failure_logs = db.get_failed_steps_log(test_id)
 
@@ -222,13 +240,10 @@ def test_details(test_id):
                 "timestamp": r[3]
             })
 
-
-
+    # sort & return only the most recent 5 results
     reports.sort(key=lambda r: r["timestamp"], reverse=True)
     reports = reports[:5]
 
-    #print("FAILESTEPS DEBUG: ", failure_logs)
-    #print("REPORTSDEBUG: ", reports)
     return render_template(
         "test_detail.html",
         testname=test_id,

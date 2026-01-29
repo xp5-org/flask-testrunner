@@ -2,20 +2,7 @@ import sys, os
 _step_counter = 0
 
 testfile_registry = {}
-# buildtest_registry = []
-# playtest_registry = []
-# packagetest_registry = []
-
-# register_playtest = lambda desc: register_test("play", desc)
-# register_buildtest = lambda desc: register_test("build", desc)
-# register_packagetest = lambda desc: register_test("package", desc)
-
-
-registry_map = {
-    # "build": buildtest_registry,
-    # "play": playtest_registry,
-    # "package": packagetest_registry,
-}
+registry_map = {}
 
 def clear_registries():
     for r in list(registry_map.values()):
@@ -73,13 +60,9 @@ def init_test_env(config, module_name):
     helperdir = "/testsrc/pyhelpers"
     if helperdir not in sys.path:
         sys.path.insert(0, helperdir)
-
     from apphelpers import register_testfile, reset_step_counter
-    
-    # Define folder clearly so it can be used for registration and paths
-    folder = config.get("projdir", config.get("projname", ""))
-    folder = config.get("projdir", config.get("projname", "")).lstrip('/')
 
+    folder = config.get("projdir", config.get("projname", "")).lstrip('/')
     
     paths = {}
     paths["projdir"] = os.path.join(config["projbasedir"], folder)
@@ -88,7 +71,6 @@ def init_test_env(config, module_name):
     
     paths["d64"] = os.path.join(paths["out"], config["cmainfile"] + ".d64")
     paths["vice_cfg"] = os.path.join(config["projbasedir"], config["viceconf"])
-    #print("FOLDER DEBUG: ", paths["vice_cfg"])
     if config.get("linkerconf"):
         paths["linker"] = os.path.join(paths["projdir"], config["linkerconf"])
     else:
