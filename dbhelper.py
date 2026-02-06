@@ -143,10 +143,11 @@ class ReportDB:
         cur.execute("""
             SELECT testparentname, test_types, name, output
             FROM test_result
-            WHERE report_id = ? AND status = 'FAIL'
+            WHERE report_id = ?
+            AND status IN ('FAIL', 'ERROR')
             ORDER BY test_index ASC
-
         """, (latest_id_for_test,))
+
 
         rows = cur.fetchall()
         conn.close()

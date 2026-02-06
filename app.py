@@ -224,7 +224,7 @@ def test_details(test_id):
     if not matching_tests:
         return "Test not found", 404
 
-     # build list of report statuses with matching testparentname
+    # build list of report statuses with matching testparentname
     latest_summary = db.get_latest_report_summary(test_id)
     failure_logs = db.get_failed_steps_log(test_id)
 
