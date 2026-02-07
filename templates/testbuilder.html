@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Test Builder</title>
+<style>
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: row; /* Timeline left, Builder right */
+    height: 100vh;
+    overflow: hidden;
+}
+
+#timeline {
+    width: 350px; /* Fixed width for the left sidebar */
+    height: 100%;
+    border-right: 1px solid #ccc;
+    position: relative;
+    padding: 20px 10px 20px 60px;
+    overflow-y: auto;
+    background: #f4f4f4;
+}
+
+#line {
+    position: absolute;
+    left: 30px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #bbb;
+}
+
+#builder {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: white;
+}
+
+/* Container for all controls/inputs at the top right */
+#controls {
+    padding: 20px;
+    border-bottom: 1px solid #eee;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/* Container for the code output at the bottom right */
+#output-container {
+    flex: 1;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.step {
+    position: relative;
+    margin: 12px 0;
+    padding: 10px;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.dot {
+    position: absolute;
+    left: -38px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 12px;
+    height: 12px;
+    background: #333;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    z-index: 2;
+}
+
+.selected {
+    background: #eef6ff;
+    border-color: #007bff;
+    font-weight: bold;
+}
+
+.group {
+    border: 1px solid #eee;
+    padding: 10px;
+    border-radius: 6px;
+    background: #fafafa;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+pre {
+    background: #222;
+    color: #adff2f;
+    padding: 15px;
+    border-radius: 5px;
+    overflow: auto;
+    margin: 0;
+    flex: 1;
+    font-family: monospace;
+}
+
+button { padding: 6px 12px; cursor: pointer; }
+.primary-btn { background: #007bff; color: white; border: none; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div id="timeline">
+    <div id="line"></div>
+    <div id="steps"></div>
+</div>
+
+<div id="builder">
+    <div id="controls">
+        <div class="row">
+            <div class="group">
+                <label>System:</label>
+                <select id="system-filter" onchange="renderTests(this.value)">
+                    <option value="all">All Systems</option>
+                </select>
+                <label>Source Test:</label>
+                <select id="testlist" onchange="updateFields()"></select>
+            </div>
+            
+            <div class="group">
+                <strong>Status:</strong> <span id="insertLabel">Insert at end</span>
+                <select id="moveTarget"></select>
+                <button onclick="moveStep()">Move Step</button>
+            </div>
+        </div>
+
+        <div class="row">
+            <select id="main"></select>
+            <select id="sub"></select>
+            <input id="param" placeholder="Parameter">
+            <button class="primary-btn" onclick="addStep()">Add Step</button>
+            <button onclick="updateStep()">Update Selected</button>
+            <button onclick="sendSteps()" style="background: #28a745; color: white; border: none; border-radius: 4px;">Sync to Flask</button>
+        </div>
+    </div>
+
+    <div id="output-container">
+        <label style="margin-bottom: 5px;"><strong>JSON Output:</strong></label>
+        <pre id="output">{}</pre>
+    </div>
+</div>
+
+<<script>
+const schema = {{ schema|tojson }};
+let steps = [];
+let selectedIndex = null;
+let allTestData = [];
+
+const mainSel = document.getElementById("main");
+const subSel = document.getElementById("sub");
+const paramInput = document.getElementById("param");
+const insertLabel = document.getElementById("insertLabel");
+const moveTarget = document.getElementById("moveTarget");
+const testListSel = document.getElementById("testlist");
+
+testListSel.addEventListener('change', render);
+
+Object.keys(schema).forEach(k => {
+    const o = document.createElement("option");
+    o.value = k;
+    o.textContent = k;
+    mainSel.appendChild(o);
+});
+
+function loadSub() {
+    subSel.innerHTML = "";
+    const currentAction = schema[mainSel.value];
+    if (currentAction) {
+        Object.keys(currentAction).forEach(k => {
+            const o = document.createElement("option");
+            o.value = k;
+            o.textContent = k;
+            subSel.appendChild(o);
+        });
+    }
+}
+
+mainSel.onchange = loadSub;
+loadSub();
+
+function loadTests() {
+    fetch('/testfile_list')
+        .then(r => r.json())
+        .then(data => {
+            allTestData = data;
+            const systemFilter = document.getElementById('system-filter');
+            const systemsSet = new Set();
+            
+            data.forEach(item => {
+                if (item.system) {
+                    systemsSet.add(item.system);
+                }
+            });
+
+            const sortedSystems = Array.from(systemsSet).sort((a, b) => a.localeCompare(b));
+            sortedSystems.forEach(sys => {
+                const opt = document.createElement('option');
+                opt.value = sys;
+                opt.textContent = sys;
+                systemFilter.appendChild(opt);
+            });
+
+            renderTests('all');
+        });
+}
+
+function renderTests(filter) {
+    const testListSel = document.getElementById("testlist");
+    testListSel.innerHTML = "<option value=''>-- Select a Test --</option>";
+    
+    const filtered = filter === 'all' 
+        ? allTestData 
+        : allTestData.filter(t => t.system === filter);
+
+    filtered.forEach(test => {
+        const opt = document.createElement("option");
+        opt.value = test.module; 
+        opt.textContent = test.display_name;
+        testListSel.appendChild(opt);
+    });
+}
+
+function updateFields() {
+    const testSlug = document.getElementById("testlist").value;
+    if (!testSlug) return;
+
+    fetch(`/api/teststeps/${testSlug}`)
+        .then(r => {
+            if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+            return r.json();
+        })
+        .then(data => {
+            steps = data;
+            selectedIndex = null;
+            render();
+        })
+        .catch(err => {
+            console.error("Fetch error:", err);
+        });
+}
+
+/* HELPER: Always creates the object in the same order */
+function createStepObject() {
+    const currentAction = mainSel.value;
+    const currentSub = subSel.value;
+    const templateParams = schema[currentAction][currentSub] || { "string": "" };
+    
+    let finalParams = { ...templateParams };
+    if (finalParams.hasOwnProperty('string')) {
+        finalParams.string = paramInput.value;
+    }
+
+    return {
+        "action": currentAction,
+        "param": finalParams,
+        "subaction": currentSub
+    };
+}
+
+function addStep() {
+    const newStep = createStepObject();
+    if (selectedIndex === null) {
+        steps.push(newStep);
+    } else {
+        steps.splice(selectedIndex + 1, 0, newStep);
+    }
+    render();
+}
+
+function updateStep() {
+    if (selectedIndex === null) return;
+    steps[selectedIndex] = createStepObject();
+    render();
+}
+
+function selectStep(index) {
+    selectedIndex = (selectedIndex === index) ? null : index;
+    if (selectedIndex !== null) {
+        const s = steps[selectedIndex];
+        mainSel.value = s.action;
+        loadSub();
+        subSel.value = s.subaction;
+        // Check if param is an object or string to avoid [object Object] in input
+        paramInput.value = (s.param && typeof s.param === 'object') ? (s.param.string || "") : (s.param || "");
+    }
+    render();
+}
+
+function moveStep() {
+    if (selectedIndex === null || steps.length < 2) return;
+    const targetIdx = parseInt(moveTarget.value);
+    const itemToMove = steps.splice(selectedIndex, 1)[0];
+    let adjustedIdx = targetIdx;
+    if (targetIdx > selectedIndex) {
+        adjustedIdx = targetIdx - 1;
+    }
+    steps.splice(adjustedIdx, 0, itemToMove);
+    selectedIndex = adjustedIdx;
+    render();
+}
+
+function render() {
+    const stepsDiv = document.getElementById("steps");
+    stepsDiv.innerHTML = "";
+    moveTarget.innerHTML = "";
+
+    steps.forEach((s, i) => {
+        const d = document.createElement("div");
+        d.className = "step" + (i === selectedIndex ? " selected" : "");
+        
+        const dot = document.createElement("div");
+        dot.className = "dot";
+        d.appendChild(dot);
+
+        const text = document.createElement("span");
+        text.textContent = `Step ${i + 1}: ${s.action} / ${s.subaction}`;
+        d.appendChild(text);
+
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "✖";
+        delBtn.style.cssText = "margin-left: 10px; color: white; background: red; border: none; border-radius: 3px; width: 20px; height: 20px; font-size: 12px; cursor: pointer;";
+        delBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (confirm("Delete this step?")) {
+                steps.splice(i, 1);
+                if (selectedIndex === i) selectedIndex = null;
+                render();
+            }
+        };
+        d.appendChild(delBtn);
+        d.onclick = () => selectStep(i);
+        stepsDiv.appendChild(d);
+    });
+
+    for (let i = 0; i <= steps.length; i++) {
+        const opt = document.createElement("option");
+        opt.value = i;
+        if (i === 0) opt.textContent = "1. The very start";
+        else if (i === steps.length) opt.textContent = (i + 1) + ". The very end";
+        else opt.textContent = (i + 1) + ". Between Step " + i + " and " + (i + 1);
+        moveTarget.appendChild(opt);
+    }
+
+    if (selectedIndex === null) {
+        insertLabel.textContent = "Insert at end (" + steps.length + " steps total)";
+        moveTarget.disabled = true;
+    } else {
+        insertLabel.textContent = "Editing Step " + (selectedIndex + 1);
+        moveTarget.disabled = false;
+        moveTarget.value = selectedIndex; 
+    }
+
+    const currentTestModule = document.getElementById("testlist").value;
+    document.getElementById("output").textContent = JSON.stringify({
+        testid: currentTestModule,
+        steps: steps
+    }, null, 2);
+}
+
+function sendSteps() {
+    const testListSel = document.getElementById("testlist");
+    const selectedModule = testListSel.value;
+    const selectedText = testListSel.options[testListSel.selectedIndex]?.text;
+
+    if (!selectedModule) {
+        alert("Please select a Source Test first.");
+        return;
+    }
+
+    const payload = {
+        testid: selectedModule,
+        testname: selectedText,
+        testtype: "dispatchtest",
+        steps: steps
+    };
+
+    fetch("/testbuilder", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === "ok") {
+            alert("Saved: " + data.message);
+        } else {
+            alert("Error: " + data.message);
+        }
+    })
+    .catch(err => alert("Failed to sync: " + err));
+}
+
+loadTests();
+render();
+</script>
+
+</body>
+</html>

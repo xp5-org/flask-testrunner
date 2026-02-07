@@ -1,12 +1,16 @@
 import os
 import threading
+import json
 import sys
 import apphelpers
+import dispatchhelper
+import importlib.util
 from appstate import progress_state
-from flask import Flask, render_template, send_from_directory, jsonify, request
+from flask import Flask, render_template, send_from_directory, jsonify, request, abort
 import apphelpers, test_runner
 from dbhelper import ReportDB
 db = ReportDB()
+
 
 
 #######################################
@@ -15,6 +19,7 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 FLASKRUNNER_HELPERDIR = "/testrunnerapp/helpers"
+
 TESTSRC_HELPERDIR = "/testsrc/helpers"
 TESTSRC_TESTLISTDIR = "/testsrc/mytests"
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
@@ -28,6 +33,69 @@ if TESTSRC_TESTLISTDIR not in sys.path:
 @app.route('/favicon.ico')
 def favicon():
     return app.send_static_file('favicon.ico')
+
+
+@app.route("/testbuilder", methods=["GET", "POST"])
+def testbuilder():
+    proj_dir = "/testsrc/pyhelpers"
+    dispatch = dispatchhelper.load_step_dispatch(proj_dir)
+    schemas = dispatchhelper.PROJECT_STEP_SCHEMAS.get(proj_dir, {})
+
+    if request.method == "POST":
+        data = request.json
+        test_id = data.get("testid") # e.g. "vic20src.dispatchtest1..."
+        steps = data.get("steps", [])
+
+        if not test_id:
+            return jsonify({"status": "error", "message": "No test ID provided"}), 400
+
+        success, message = sync_test_steps(test_id, steps)
+        
+        if success:
+            return jsonify({"status": "ok", "message": message})
+        else:
+            return jsonify({"status": "error", "message": message}), 500
+
+    output = {
+        "functions": list(dispatch.keys()),
+        "schemas": schemas
+    }
+    action_schema = get_dynamic_action_schema(output)
+    return render_template("testbuilder.html", schema=action_schema)
+
+
+@app.route("/api/teststeps/<path:module_path>", methods=["GET"])
+def get_test_steps(module_path):
+    parts = module_path.split('.')
+    target_file_base = next((p for p in parts if p.startswith("__testlist__")), None)
+    
+    if not target_file_base:
+        abort(404)
+
+    fname = target_file_base + ".py"
+    testlist_path = None
+
+    for root, dirs, files in os.walk(TESTLIST_ROOT):
+        if fname in files:
+            testlist_path = os.path.join(root, fname)
+            break
+
+    if testlist_path is None:
+        abort(404)
+
+    module_name = "_testlist_%s" % abs(hash(testlist_path))
+    spec = importlib.util.spec_from_file_location(module_name, testlist_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        if module_name in sys.modules:
+            del sys.modules[module_name]
+        abort(500)
+
+    return jsonify(module.CONFIG.get("steps", []))
 
 
 @app.route("/")
@@ -214,7 +282,7 @@ def test_details(test_id):
 
             if not type_summary:
                 test_copy["latest_status"][type_name] = None
-            elif any(s["status"] == "FAIL" for s in type_summary):
+            elif any(s["status"] in ("FAIL", "ERROR") for s in type_summary):
                 test_copy["latest_status"][type_name] = "FAIL"
             else:
                 test_copy["latest_status"][type_name] = "PASS"
@@ -257,8 +325,109 @@ def test_details(test_id):
 
 
 
+# need to move these to helper files
+TESTLIST_ROOT = "/testsrc/sourcedir"
+def get_dynamic_action_schema(output_data):
+    action_schema = {}
+    
+    for func_name in output_data["functions"]:
+        parts = func_name.split("_", 1)
+        
+        if len(parts) == 2:
+            category = parts[0]
+            action = parts[1]
+        else:
+            category = "general"
+            action = func_name
+
+        if category not in action_schema:
+            action_schema[category] = {}
+
+        action_schema[category][action] = output_data["schemas"].get(func_name, {})
+        
+    return action_schema
+
+
+def sync_test_steps(module_name, new_steps):
+    import os
+    meta = apphelpers.testfile_registry.get(module_name)
+    if not meta or "__full_path__" not in meta:
+        return False, f"Registry lookup failed for {module_name}"
+
+    file_path = meta["__full_path__"]
+    
+    if not os.path.exists(file_path):
+        return False, f"File not found on disk: {file_path}"
+
+    try:
+        update_test_steps_in_file(file_path, new_steps)
+        return True, "Successfully synced steps to disk"
+    except Exception as e:
+        return False, str(e)
+
+
+def update_test_steps_in_file(file_path, steps):
+    print(f"[DEBUG] Syncing file (No-Regex): {file_path}")
+    
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+
+    header = []
+    footer = []
+    found_steps = False
+    done_steps = False
+
+    for line in lines:
+        if not found_steps:
+            if '"steps": [' in line or "'steps': [" in line:
+                found_steps = True
+                header.append(line.split(':')[0] + ': ')
+            else:
+                header.append(line)
+        elif found_steps and not done_steps:
+            # find closing bracket of the steps list
+            if line.strip().startswith(']') or line.strip() == ']}':
+                done_steps = True
+                if '}' in line:
+                    footer.append('}\n')
+        elif done_steps:
+            footer.append(line)
+
+    if not found_steps:
+        print("[DEBUG] ERROR: Could not find 'steps' key in file.")
+        return
+
+    new_steps_block = json.dumps(steps, indent=8).replace("true", "True").replace("false", "False")
+    
+    with open(file_path, 'w') as f:
+        f.writelines(header)
+        f.write(new_steps_block)
+        if footer:
+            f.write(",\n") # Ensure comma if more config follows
+            f.writelines(footer)
+        else:
+            f.write("\n}") # Close the dict if footer was empty
+
+    print(f"[DEBUG] File updated successfully: {file_path}")
+
+
+
 
 if __name__ == "__main__":
+    # dispatch addon debug
+    # from dispatchhelper import load_step_dispatch, get_step_schema
+    # project_path = "/testsrc/pyhelpers/"
+    # dispatch = load_step_dispatch(project_path)
+    # schemas = get_step_schema(project_path)
+    # output = {
+    #     "functions": list(dispatch.keys()),
+    #     "schemas": schemas
+    # }
+
+    # action_schema = get_dynamic_action_schema(output)
+    # print("JSONDEBUG: ", json.dumps(action_schema, indent=4))
+
+
     if not os.path.exists(DB_PATH):
         test_runner.db.init_report_db(DB_PATH)
     app.run(host="0.0.0.0", port=8080, debug=False)

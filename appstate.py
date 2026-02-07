@@ -1,3 +1,5 @@
+# this is in its own file so it can be imported easily
+
 class ProgressState:
     def __init__(self):
         self.step = "Idle"

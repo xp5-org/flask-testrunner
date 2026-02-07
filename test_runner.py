@@ -2,18 +2,18 @@ import os
 import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.pycache_prefix = os.path.join(BASE_DIR, "pycache")
-
-
 import time
 import re
 import shutil
 import datetime
-import apphelpers
 import glob
 import importlib
 from collections import defaultdict
+
 from appstate import progress_state
 from app import db
+import apphelpers
+import dispatchhelper
 
 TESTSRC_HELPERDIR = "/testsrc/helpers"
 TESTSRC_BASEDIR = "/testsrc/"
@@ -162,33 +162,17 @@ def run_registered_test(name, registry, context):
 def run_testfile(module_name, state=None):
     global failed_loads
     failed_loads.clear()
+    
+    all_tests = []
+    test_descriptions = []
+    context = {"sock": None, "abort": False}
+
     meta = apphelpers.testfile_registry.get(module_name)
     if not meta:
         print(f"ERROR: {module_name} not found in testfile_registry")
         if state:
             state.step, state.test_name = "Error", "No registry entry"
         return []
-    
-
-    mod = sys.modules.get(module_name)
-    if mod and hasattr(mod, "CONFIG"):
-        config = mod.CONFIG
-        if state:
-            state.testid = config.get("testname", "")   # human-friendly name
-            state.testtype = config.get("testtype", "") # button label / type info
-            state.testname = module_name                # dot path
-
-    
-    # Get the dictionary: {'build': '...'}
-    raw_types = meta.get("types", {})
-
-    # Extract just the keys (e.g., "build")
-    if isinstance(raw_types, dict):
-        test_types = ", ".join(raw_types.keys())
-    elif isinstance(raw_types, list):
-        test_types = ", ".join(raw_types)
-    else:
-        test_types = str(raw_types)
 
     full_path = meta.get("__full_path__")
     if not full_path:
@@ -196,34 +180,76 @@ def run_testfile(module_name, state=None):
         return []
 
     apphelpers.clear_registries()
+    mod = load_testfile_from_path(full_path)
+    
+    if mod and hasattr(mod, "CONFIG") and "steps" in mod.CONFIG:
+            config = mod.CONFIG
+            proj_dir = "/testsrc/pyhelpers"
+            dispatch = dispatchhelper.load_step_dispatch(proj_dir)
+            
+            for i, step in enumerate(config["steps"], 1):
+                action = step.get('action', 'unknown')
+                subaction = step.get('subaction', 'unknown')
+                func_name = f"{action}_{subaction}"
+                func = dispatch.get(func_name)
+                
+                # create a unique name with stepnum appended , temp fix
+                # list steps names must be unique or will get errors like test with 4 steps but only 3 run
+                unique_name = f"{i}_{func_name}"
+                
+                if func:
+                    kwargs = step.get("param", {}).copy()
+                    kwargs['context'] = context
+                    kwargs['config'] = config
+                    
+                    def step_wrapper(test_meta=None, f=func, kw=kwargs):
+                        try:
+                            return f(**kw)
+                        except Exception as e:
+                            return False, f"PYTHON CRASH in {f.__name__}: {str(e)}"
+                    
+                    step_wrapper.test_description = unique_name
+                    step_wrapper.my_test_type = config.get("testtype", "dispatchtest")
+                    
+                    all_tests.append(step_wrapper)
+                    test_descriptions.append(step_wrapper.test_description)
+                else:
+                    print(f"ERROR: Function {func_name} not found")
+                    
+                    def fail_wrapper(test_meta=None, *args, name=func_name, **kwargs):
+                        return False, f"Function {name} not found in dispatch"
+                    
+                    fail_wrapper.test_description = f"{unique_name} (Missing)"
+                    fail_wrapper.my_test_type = config.get("testtype", "dispatchtest")
+                    
+                    all_tests.append(fail_wrapper)
+                    test_descriptions.append(fail_wrapper.test_description)
 
-    load_testfile_from_path(full_path)
-    all_tests = []
-    test_descriptions = []
+    else:
+        for registry in apphelpers.registry_map.values():
+            for f in registry:
+                desc = getattr(f, "test_description", None)
+                if desc and f not in all_tests:
+                    all_tests.append(f)
+                    test_descriptions.append(desc)
 
-    for registry in apphelpers.registry_map.values():
-        for f in registry:
-            desc = getattr(f, "test_description", None)
-            if desc and f not in all_tests:
-                all_tests.append(f)
-                test_descriptions.append(desc)
+    if mod and hasattr(mod, "CONFIG"):
+        config = mod.CONFIG
+        if state:
+            state.testid = config.get("testname", "")
+            state.testtype = config.get("testtype", "")
+            state.testname = module_name
 
     if not all_tests:
         print(f"FINISHED: No tests found after loading {module_name}")
         if state:
             state.step = "Done"
-            state.test_name = "No tests found (Decorators likely commented out)"
+            state.test_name = "No tests found"
         return []
 
-
     print(f"Found {len(all_tests)} tests to run for {module_name}.")
-    context = {"sock": None, "abort": False}
-
-    # 3. Execution
     results = run_tests(test_descriptions, all_tests, context, module_name)
 
-
-    # 4. Timer Helpers for DB
     def get_start(name):
         ts = TestrunnerTimer.get_start(name)
         return ts if ts is not None else time.time()
@@ -235,7 +261,6 @@ def run_testfile(module_name, state=None):
         dur = next((d for n, s, c, o, out, d in results if n == name), 0.0)
         return get_start(name) + dur
 
-    # 5. Report Generation
     total_suite_duration = round(sum(r[5] for r in results), 2)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     subdir_path = os.path.join(REPORT_DIR, timestamp)
@@ -244,15 +269,16 @@ def run_testfile(module_name, state=None):
     report_path = os.path.join(subdir_path, f"{module_name}.html")
     generate_report(results, report_path, testlist_name=module_name)
 
-    # get test-name from the config registry
-    mod = sys.modules.get(module_name)
-    if not mod or not hasattr(mod, "CONFIG"):
-        print(f"ERROR: CONFIG not found in {module_name}")
-        return []
+    raw_types = meta.get("types", {})
+    if isinstance(raw_types, dict):
+        test_types = ", ".join(raw_types.keys())
+    elif isinstance(raw_types, list):
+        test_types = ", ".join(raw_types)
+    else:
+        test_types = str(raw_types)
 
-    config_testparentname = mod.CONFIG.get("testname")
+    config_testparentname = mod.CONFIG.get("testname") if hasattr(mod, "CONFIG") else module_name
 
-    # 6. Database Population
     db.populate_sqlite(
         test_id=module_name,
         testparentname=config_testparentname,
@@ -269,6 +295,30 @@ def run_testfile(module_name, state=None):
         state.test_name = ""
 
     return results
+
+
+def parse_step_params(param_str):
+    params = {}
+    if not param_str:
+        return params
+    pairs = param_str.split(',')
+    for pair in pairs:
+        if '=' in pair:
+            key, value = pair.split('=', 1)
+            params[key.strip()] = value.strip()
+        else:
+            params['string'] = pair.strip()
+    return params
+
+
+def create_step_wrapper(func, args_payload):
+    def wrapped_step(ctx):
+        merged_args = args_payload.copy()
+        sig = inspect.signature(func)
+        if "context" in sig.parameters:
+            merged_args["context"] = ctx
+        return func(**merged_args)
+    return wrapped_step
 
 
 def run_tests(test_descriptions, registry, context, module_name):
