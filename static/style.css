@@ -1,0 +1,131 @@
+/* General Layout */
+body {
+    font-family: sans-serif; 
+    background: #f4f4f4;
+    color: #333;
+    padding: 20px;
+    line-height: 1.1;
+}
+
+h2, h3 {
+    margin: 25px 0 10px 0;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+}
+
+/* Unified Table Logic */
+table {
+    width: 100%;
+    table-layout: fixed; /* Prevents columns from resizing based on text length */
+    border-collapse: collapse;
+    margin-bottom: 20px;
+    background: #fff;
+    border: 1px solid #ddd;
+}
+
+th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    color: #666;
+}
+
+th, td {
+    padding: 8px 12px;
+    text-align: left;
+    border: 1px solid #eee;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* STRICT COLUMN WIDTHS (Matches every table on the page) */
+th:nth-child(1), td:nth-child(1) { width: 40%; } /* ID / Report Name */
+th:nth-child(2), td:nth-child(2) { width: 15%; } /* System / Duration */
+th:nth-child(3), td:nth-child(3) { width: 30%; } /* Run Buttons / Timestamp */
+th:nth-child(4), td:nth-child(4) { width: 15%; } /* Status / Empty Space */
+
+/* Status Styling */
+.green { background-color: #d4edda !important; color: #155724; font-weight: bold; text-align: center; }
+.red   { background-color: #f8d7da !important; color: #721c24; font-weight: bold; text-align: center; }
+.gray  { background-color: #e2e3e5 !important; color: #383d41; text-align: center; }
+
+/* Interactive Elements */
+.test-link { color: #007bff; cursor: pointer; text-decoration: underline; }
+.btn-group { display: flex; gap: 4px; flex-wrap: wrap; }
+
+button {
+    cursor: pointer;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+}
+
+button:hover { background-color: #0056b3; }
+
+#system-filter {
+    padding: 5px;
+    margin-bottom: 15px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+}
+
+
+/* Grid for the top cards */
+.test-grid {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    margin-bottom: 30px;
+}
+
+.test-card {
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 15px;
+    min-width: 200px;
+    flex: 1;
+    background: #fff;
+}
+
+.card-header {
+    font-size: 1.1rem;
+    border-bottom: 1px solid #eee;
+    margin-bottom: 10px;
+    padding-bottom: 5px;
+}
+
+.card-body {
+    font-size: 0.85rem;
+    margin-bottom: 15px;
+}
+
+.code-block {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 10px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    font-size: 0.8rem;
+    border-radius: 4px;
+}
+
+
+
+
+
+
+    /* Control height via padding */
+    #most-recent-table td, 
+    #summaries-table td, 
+    .test-table td {
+        padding: 2px 12px; 
+        line-height: 1;
+    }
+
+

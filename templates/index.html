@@ -1,70 +1,33 @@
-<!doctype html>
-<html>
-<head>
+{% extends "base.html" %}
 
-        {% include "navbar.html" %}
-
-<div>
-    <pre>{{ paths | tojson(indent=2) }}</pre>
-</div>
-    <title>Test Runner</title>
-    <style>
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            table-layout: fixed;
-        }
-
-        th {
-        background-color: #cccccc;
-        }
+{% block content %}
+<!-- {% include "navbar.html" %} -->
 
 
-        th, td {
-            border: 1px solid #ccc;
-            padding: 8px;
-            text-align: left;
-        }
 
-        /* tr:nth-child(odd) {
-            background-color: #e0e0e0;
-        } */
+<style>
+    /* Control height via padding */
+    #most-recent-table td, 
+    #summaries-table td, 
+    .test-table td {
+        padding: 2px 12px; 
+        line-height: 1;
+    }
 
-        th:nth-child(1), td:nth-child(1) { width: 25%; }
-        th:nth-child(2), td:nth-child(2) { width: 20%; }
-        th:nth-child(3), td:nth-child(3) { width: 35%; }
-        th:nth-child(4), td:nth-child(4) { width: 20%; }
-.green { background-color: #c8f7c5 !important; }
-.red { background-color: #f7c5c5 !important; }
-.gray { background-color: #eeeeee !important; }
+</style>
 
-        a {
-            display: inline-block;
-            line-height: 1;
-            padding: 0;
-            margin: 0;
-            text-decoration: none;
-        }
-    </style>
-</head>
+<p id="progress-status">Progress: Idle</p>
 
-<body>
-    <p id="progress-status">Progress: Idle</p>
-
-    <h3>Filter by System</h3>
-    <select id="system-filter">
+<h3>Filter by System</h3>
+<select id="system-filter">
     <option value="all">All</option>
 </select>
 
+<h2>Available Tests</h2>
+<div id="failed-tests-container"></div>
+<div id="testfile-container"></div>
 
-    <h2>Available Tests</h2>
-    <div id="failed-tests-container"></div>
-    <div id="testfile-container"></div>
-
-
-    <br><br>
-
-
+<br><br>
 
 <script>
 const failedColor = "#f7c5c5";
@@ -91,18 +54,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 {% if latest_summary %}
 <h1>Most Recent: {{ latest_summary[0].test_id.split('.')[-1] }}</h1>
 
-    <table id="most-recent-table">
-        <tr><th>Test</th><th>Duration (s)</th><th>Status</th></tr>
-        {% for step in latest_summary %}
-            <tr>
-                <td>{{ step.step_name }}</td>
-                <td>{{ step.duration }}</td>
-                <td class="{{ 'green' if step.status == 'PASS' else ('red' if step.status == 'FAIL' else 'gray') }}">{{ step.status }}</td>
-            </tr>
-        {% endfor %}
-    </table>
+<table id="most-recent-table">
+    <tr><th>Test</th><th>Duration (s)</th><th>Status</th></tr>
+    {% for step in latest_summary %}
+        <tr>
+            <td>{{ step.step_name }}</td>
+            <td>{{ step.duration }}</td>
+            <td class="{{ 'green' if step.status == 'PASS' else ('red' if step.status == 'FAIL' else 'gray') }}">{{ step.status }}</td>
+        </tr>
+    {% endfor %}
+</table>
 {% endif %}
-
 
 <h2>Summaries</h2>
 <table id="summaries-table">
@@ -119,77 +81,72 @@ document.addEventListener("DOMContentLoaded", async () => {
     {% endfor %}
 </table>
 
-
 <script>
 const bgcolor1 = "#f5f5f5";
 const bgcolor2 = "#e0e0e0";
 
 let isPolling = false;
 document.addEventListener("DOMContentLoaded", async () => {
-window.startTest = async (file, displayName, type) => {
-    const statusEl = document.getElementById("progress-status");
-    statusEl.textContent = `Progress: Starting ${displayName}...`;
-    
-    try {
-        const response = await fetch(`/run/${encodeURIComponent(file)}`);
+    window.startTest = async (file, displayName, type) => {
+        const statusEl = document.getElementById("progress-status");
+        statusEl.textContent = `Progress: Starting ${displayName}...`;
         
-        if (response.ok) {
-            // Start polling if not already running
-            if (!isPolling) {
-                isPolling = true;
-                pollProgress();
+        try {
+            const response = await fetch(`/run/${encodeURIComponent(file)}`);
+            
+            if (response.ok) {
+                if (!isPolling) {
+                    isPolling = true;
+                    pollProgress();
+                }
+            } else {
+                statusEl.textContent = `Progress: Error (${response.status})`;
             }
-        } else {
-            statusEl.textContent = `Progress: Error (${response.status})`;
+        } catch (err) {
+            console.error("Fetch error:", err);
+            statusEl.textContent = "Progress: Connection failed.";
         }
-    } catch (err) {
-        console.error("Fetch error:", err);
-        statusEl.textContent = "Progress: Connection failed.";
-    }
-};
+    };
 
-async function pollProgress() {
-    const statusEl = document.getElementById("progress-status");
-    
-    try {
-        const res = await fetch("/progress");
-        const data = await res.json();
+    async function pollProgress() {
+        const statusEl = document.getElementById("progress-status");
+        
+        try {
+            const res = await fetch("/progress");
+            const data = await res.json();
 
-        if (data.step === "Done") {
-            if (isPolling) {
-                statusEl.textContent = "Progress: Complete - Updating tables...";
-                isPolling = false;
-                setTimeout(() => location.reload(), 1500);
+            if (data.step === "Done") {
+                if (isPolling) {
+                    statusEl.textContent = "Progress: Complete - Updating tables...";
+                    isPolling = false;
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    statusEl.textContent = "Progress: Idle";
+                }
+                return;
+            }
+
+            if (data.step !== "Idle") {
+                isPolling = true;
+                statusEl.textContent = `Progress: ${data.step} - ${data.testid} 
+                    - ${data.step_name} 
+                    - (${data.testtype}) 
+                    - ${data.testname}`;
+                
+                setTimeout(pollProgress, 2000);
             } else {
                 statusEl.textContent = "Progress: Idle";
+                isPolling = false; 
             }
-            return;
+        } catch (e) {
+            console.error("Polling error:", e);
+            setTimeout(pollProgress, 5000); 
         }
-
-        // Check for specific non-idle steps
-        if (data.step !== "Idle") {
-            isPolling = true;
-            // FIXED: status.innerText changed to statusEl.textContent
-            statusEl.textContent = `Progress: ${data.step} - ${data.testid} 
-                - ${data.step_name} 
-                - (${data.testtype}) 
-                - ${data.testname}`;
-            
-            setTimeout(pollProgress, 2000);
-        } else {
-            statusEl.textContent = "Progress: Idle";
-            isPolling = false; 
-        }
-    } catch (e) {
-        console.error("Polling error:", e);
-        // Retry later if the server is temporarily unreachable
-        setTimeout(pollProgress, 5000); 
     }
-}
 
-
-pollProgress(); 
+    pollProgress(); 
 });
+
 document.addEventListener("DOMContentLoaded", async () => {
     const container = document.getElementById("testfile-container");
     const systemFilter = document.getElementById("system-filter");
@@ -197,20 +154,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     const testRes = await fetch("/testfile_list");
     const testfiles = await testRes.json();
 
-    // Organize tests by platform
     const platforms = testfiles.reduce((acc, t) => {
         const p = t.platform || "Unknown";
         (acc[p] = acc[p] || []).push(t);
         return acc;
     }, {});
 
-    // Populate dropdown
     const systemSet = new Set(testfiles.map(t => t.system).filter(Boolean));
     Array.from(systemSet).sort().forEach(sys => {
         systemFilter.insertAdjacentHTML("beforeend", `<option value="${sys}">${sys}</option>`);
     });
 
-    // Render all platforms & tests
     for (const [platform, tests] of Object.entries(platforms)) {
         let html = `<div class="platform-section" data-platform="${platform}">
                         <h3>${platform}</h3>
@@ -226,13 +180,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         Object.values(grouped).forEach(group => {
             const test = group[0];
-const buttons = group.map(t =>
-    Object.entries(t.types || {}).map(([type, file]) =>
-        `<button onclick="startTest('${t.module}', '${t.display_name}', '${type}')">${type}</button>`
-    ).join("")
-).join("");
+            const buttons = group.map(t =>
+                Object.entries(t.types || {}).map(([type, file]) =>
+                    `<button onclick="startTest('${t.module}', '${t.display_name}', '${type}')">${type}</button>`
+                ).join("")
+            ).join("");
 
-            
             html += `<tr>
                         <td><span class="test-link" data-testid="${test.id}">${test.display_name}</span></td>
                         <td class="system-col">${test.system}</td>
@@ -244,7 +197,6 @@ const buttons = group.map(t =>
         container.insertAdjacentHTML("beforeend", html);
     }
 
-    // Initial styling for rows
     const updateStriping = (rows) => {
         const visibleRows = rows.filter(r => r.style.display !== "none");
         visibleRows.forEach((row, i) => {
@@ -252,19 +204,16 @@ const buttons = group.map(t =>
         });
     };
 
-    // Style platform tables
     document.querySelectorAll(".platform-section").forEach(section => {
         const rows = Array.from(section.querySelectorAll("tr")).slice(1);
         updateStriping(rows);
     });
 
-    // Style summary tables
     document.querySelectorAll("#most-recent-table, #summaries-table").forEach(tbl => {
         const rows = Array.from(tbl.querySelectorAll("tr")).slice(1);
         updateStriping(rows);
     });
 
-    // Link click handlers
     document.querySelectorAll(".test-link").forEach(el => {
         el.addEventListener("click", () => {
             const id = el.dataset.testid;
@@ -272,7 +221,6 @@ const buttons = group.map(t =>
         });
     });
 
-    // Filter Logic
     systemFilter.addEventListener("change", () => {
         const value = systemFilter.value;
         document.querySelectorAll(".platform-section").forEach(section => {
@@ -296,7 +244,4 @@ const buttons = group.map(t =>
     });
 });
 </script>
-
-
-</body>
-</html>
+{% endblock %}

@@ -1,13 +1,9 @@
-<!doctype html>
-<html>
-<head>
-    <title>Clone Build Test</title>
-    <style>
-        body { font-family: sans-serif; padding: 10px; margin: 0; line-height: 1.2; background: #f4f4f4; }
-        #main-content { max-width: 800px; margin: 0 auto; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        
-        h2 { margin: 0 0 15px 0; font-size: 1.2em; border-bottom: 2px solid #007bff; padding-bottom: 5px; }
+{% extends "base.html" %}
 
+{% block content %}
+
+
+    <style>
         .spreadsheet { display: table; width: 100%; border-collapse: collapse; }
         .row { display: table-row; border-bottom: 1px solid #eee; }
         .cell { display: table-cell; padding: 6px; vertical-align: middle; }
@@ -26,9 +22,8 @@
         .prefix { background: #eee; padding: 4px 8px; border: 1px solid #ccc; border-right: none; border-radius: 3px 0 0 3px; font-size: 0.8em; color: #666; }
         .prefixed-input { border-radius: 0 3px 3px 0; }
     </style>
-</head>
-<body>
-    <div id="navbar">{% include "navbar.html" %}</div>
+
+
 
     <div id="main-content">
         <h2>Clone Build Test</h2>
@@ -225,5 +220,4 @@ function loadConfigFields(cfg) {
 
 loadTests();
     </script>
-</body>
-</html>
+{% endblock %}
