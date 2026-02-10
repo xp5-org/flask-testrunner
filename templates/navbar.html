@@ -1,8 +1,6 @@
 <div id="nav">
     {% for a in nav_actions %}
-        <form action="{{ url_for(a.endpoint) }}" method="get">
-            <button type="submit" class="navbutton">{{ a.name }}</button>
-        </form>
+        <a href="{{ url_for(a.endpoint) }}" class="navbutton">{{ a.name }}</a>
     {% endfor %}
 </div>
 
@@ -15,15 +13,12 @@
     background: #007bff;
 }
 
-#nav form {
-    margin: 0;
-}
-
 .navbutton {
+    display: inline-block;
     padding: 6px 12px;
     background: #28a745;
     color: white;
-    border: none;
+    text-decoration: none;
     border-radius: 4px;
     font-weight: bold;
     cursor: pointer;

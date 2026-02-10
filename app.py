@@ -11,6 +11,7 @@ from flask import Flask, render_template, send_from_directory, jsonify, request,
 import apphelpers, test_runner
 from dbhelper import ReportDB
 db = ReportDB()
+from appstate import build_nav, nav
 
 
 
@@ -21,12 +22,17 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 FLASKRUNNER_HELPERDIR = "/testrunnerapp/helpers"
 
-TESTSRC_HELPERDIR = "/testsrc/helpers"
+# need to move these to helper files
+TESTLIST_ROOT = "/testsrc/sourcedir"
+TESTSRC_HELPERDIR = "/testsrc/pyhelpers"
 TESTSRC_TESTLISTDIR = "/testsrc/mytests"
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
 #######################################
 if TESTSRC_TESTLISTDIR not in sys.path:
     sys.path.insert(0, TESTSRC_TESTLISTDIR)
+
+
+
 
 
 
@@ -39,24 +45,10 @@ def inject_nav_and_paths():
     }
 
 
-
-def nav(label):
-    def decorator(f):
-        f.nav_label = label
-        return f
-    return decorator
-
-
-
-
 @app.route('/favicon.ico')
 def favicon():
     paths = {"mode": "home"}
     return app.send_static_file('favicon.ico')
-
-
-
-
 
 
 @app.route("/api/teststeps/<path:module_path>", methods=["GET"])
@@ -78,7 +70,6 @@ def get_test_steps(module_path):
     if testlist_path is None:
         abort(404)
 
-    # --- STRATEGY 1: Try to Import and read CONFIG['steps'] ---
     found_steps = []
     module_name = "_testlist_%s" % abs(hash(testlist_path))
 
@@ -96,15 +87,11 @@ def get_test_steps(module_path):
                 found_steps = module.CONFIG.get("steps", [])
                 
     except Exception:
-        # If the file crashes on import (syntax error, runtime error), 
-        # just ignore it and fall through to the text scan.
         found_steps = []
     finally:
-        # Always clean up sys.modules to prevent pollution
         if module_name in sys.modules:
             del sys.modules[module_name]
 
-    # If we found valid steps via import, return them immediately
     if found_steps:
         return jsonify(found_steps)
 
@@ -142,7 +129,6 @@ def get_test_steps(module_path):
     return jsonify(step_actions)
 
 
-
 @app.route("/")
 @nav("Home")
 def index():
@@ -164,9 +150,6 @@ def index():
 @nav("Clone")
 def cloneproj():
     return render_template("cloneproj.html")
-
-
-
 
 
 @app.route("/testbuilder", methods=["GET", "POST"])
@@ -209,13 +192,6 @@ def testbuilder():
 
     action_schema = get_dynamic_action_schema(output)
     return render_template("testbuilder.html", schema=action_schema)
-
-
-
-
-
-
-
 
 
 @app.route("/failed_tests")
@@ -301,7 +277,6 @@ def module_path():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
 @app.route('/clone_as_new')
 def clone_as_new():
     from newprojecthelper import copybuildtest, copy_sourcedir
@@ -370,7 +345,7 @@ def test_details(test_id):
         for type_name in summary_types:
             summary_by_type.setdefault(type_name, []).append(s)
     
-    # search for failed test-steps from the testparentname
+    # This prints report statuses
     matching_tests = []
     for info in apphelpers.testfile_registry.values():
         if info.get("id") != test_id:
@@ -380,6 +355,7 @@ def test_details(test_id):
         test_copy["latest_status"] = {}
         for type_name in info.get("types", {}):
             type_summary = summary_by_type.get(type_name, [])
+            print("typesummarydebug: ", type_summary)
 
             if not type_summary:
                 test_copy["latest_status"][type_name] = None
@@ -396,6 +372,7 @@ def test_details(test_id):
     # build list of report statuses with matching testparentname
     latest_summary = db.get_latest_report_summary(test_id)
     failure_logs = db.get_failed_steps_log(test_id)
+    print("failurelogsdebug: ", test_id, "LOGS", failure_logs)
 
     reports = []
     for r in all_summaries:
@@ -423,11 +400,6 @@ def test_details(test_id):
         failure_logs=failure_logs
     )
 
-
-
-
-# need to move these to helper files
-TESTLIST_ROOT = "/testsrc/sourcedir"
 
 def get_dynamic_action_schema(output_data):
     action_schema = {}
@@ -501,13 +473,29 @@ def update_test_steps_in_file(file_path, steps):
     print(f"[DEBUG] File updated successfully: {file_path}")
 
 
-def build_nav(app):
-    items = []
-    for endpoint, view in app.view_functions.items():
-        label = getattr(view, "nav_label", None)
-        if label:
-            items.append({"name": label, "endpoint": endpoint})
-    return items
+
+
+# importing /testsrc/pyhelpers/customflaskroutes.py
+route_file = os.path.join(TESTSRC_HELPERDIR, 'customflaskroutes.py')
+if os.path.isfile(route_file):
+    spec = importlib.util.spec_from_file_location('custom_routes', route_file)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # add template dir as custom template path
+    from jinja2 import ChoiceLoader, FileSystemLoader
+
+    # after loading your custom routes
+    projectB_template_dir = "/testsrc/flasktemplates"
+
+    # combine existing loader with the new folder
+    app.jinja_loader = ChoiceLoader([
+        app.jinja_loader,
+        FileSystemLoader(projectB_template_dir)
+    ])
+    
+    if hasattr(module, 'register_routes'):
+        module.register_routes(app)
+
 
 
 
@@ -529,4 +517,5 @@ if __name__ == "__main__":
 
     if not os.path.exists(DB_PATH):
         test_runner.db.init_report_db(DB_PATH)
-    app.run(host="0.0.0.0", port=8080, debug=False)
+    app.run(host="0.0.0.0", port=8080, debug=True)
+
