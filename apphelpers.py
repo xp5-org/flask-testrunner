@@ -94,36 +94,3 @@ def init_test_env(config, module_name):
 
     reset_step_counter()
     return paths
-
-
-def load_test_steps(testlist_path, expected_name=None):
-    import importlib.util
-    import os
-
-    testlist_path = os.path.abspath(testlist_path)
-
-    if not os.path.isfile(testlist_path):
-        raise ValueError("Testlist file does not exist: %s" % testlist_path)
-
-    module_name = "_testlist_%s" % abs(hash(testlist_path))
-
-    spec = importlib.util.spec_from_file_location(module_name, testlist_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Unable to load testlist module")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    if not hasattr(module, "CONFIG"):
-        raise RuntimeError("CONFIG not found in testlist")
-
-    config = module.CONFIG
-
-    if expected_name is not None:
-        if config.get("testname") != expected_name:
-            raise RuntimeError("Test name does not match")
-
-    if "steps" not in config:
-        raise RuntimeError("steps not found in CONFIG")
-
-    return config["steps"]

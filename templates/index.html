@@ -1,6 +1,12 @@
 <!doctype html>
 <html>
 <head>
+
+        {% include "navbar.html" %}
+
+<div>
+    <pre>{{ paths | tojson(indent=2) }}</pre>
+</div>
     <title>Test Runner</title>
     <style>
         table {

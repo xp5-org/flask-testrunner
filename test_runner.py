@@ -116,19 +116,14 @@ def run_registered_test(name, registry, context):
     for test_func in registry:
         if test_func.test_description == name:
             try:
-                # 1. Stop if we are already in an aborted state
                 if context.get("abort"):
                     return (name, "FAIL", "red", "Aborted due to previous failure", "", 0.00)
 
                 print(f"Running {name}")
                 start_time = time.time()
-                
-                # 2. Run the test
                 result = test_func(context)
-
                 duration = time.time() - start_time
                 
-                # 3. Unpack result
                 if isinstance(result, tuple):
                     success = result[0]
                     log_output = result[1]
@@ -190,7 +185,8 @@ def run_testfile(module_name, state=None):
             for i, step in enumerate(config["steps"], 1):
                 action = step.get('action', 'unknown')
                 subaction = step.get('subaction', 'unknown')
-                func_name = f"{action}_{subaction}"
+                #func_name = f"{action}_{subaction}"
+                func_name = f"{action}"
                 func = dispatch.get(func_name)
                 
                 # create a unique name with stepnum appended , temp fix
@@ -206,7 +202,12 @@ def run_testfile(module_name, state=None):
                         try:
                             return f(**kw)
                         except Exception as e:
-                            return False, f"PYTHON CRASH in {f.__name__}: {str(e)}"
+                            return False, (
+                                f"Testrunner.py: PYTHON CRASH in {f.__name__}:\n"
+                                f"kwargs={kw}\n"
+                                f"{type(e).__name__}: {str(e)}"
+                            )
+
                     
                     step_wrapper.test_description = unique_name
                     step_wrapper.my_test_type = config.get("testtype", "dispatchtest")
@@ -297,30 +298,6 @@ def run_testfile(module_name, state=None):
     return results
 
 
-def parse_step_params(param_str):
-    params = {}
-    if not param_str:
-        return params
-    pairs = param_str.split(',')
-    for pair in pairs:
-        if '=' in pair:
-            key, value = pair.split('=', 1)
-            params[key.strip()] = value.strip()
-        else:
-            params['string'] = pair.strip()
-    return params
-
-
-def create_step_wrapper(func, args_payload):
-    def wrapped_step(ctx):
-        merged_args = args_payload.copy()
-        sig = inspect.signature(func)
-        if "context" in sig.parameters:
-            merged_args["context"] = ctx
-        return func(**merged_args)
-    return wrapped_step
-
-
 def run_tests(test_descriptions, registry, context, module_name):
     results = []
     seen_names = set()
@@ -376,18 +353,15 @@ def generate_report(results, report_path, testlist_name=""):
     if subdir_path and not os.path.exists(subdir_path):
         os.makedirs(subdir_path, exist_ok=True)
 
-    # Move compile logs into report subdir
     if os.path.exists(compile_logs_dir):
         for filename in os.listdir(compile_logs_dir):
             shutil.move(os.path.join(compile_logs_dir, filename), subdir_path)
 
-    # Move screenshots from REPORT_DIR into subdir
     for filename in os.listdir(REPORT_DIR):
         if (re.match(r"test\d+\.(png|ppm|gif)$", filename) or
             filename.startswith("screenshot-")):
             shutil.move(os.path.join(REPORT_DIR, filename), subdir_path)
 
-    # Collect screenshots by integer test step
     screenshot_map = defaultdict(list)
     for fname in os.listdir(subdir_path):
         if fname.endswith((".png", ".gif")):
@@ -488,26 +462,3 @@ def generate_report(results, report_path, testlist_name=""):
         f.write("</body></html>")
 
     print(f"Wrote report to {report_path}")
-
-
-def movethefiles(results):
-    subdir_path = os.path.dirname(DB_PATH)
-    if subdir_path and not os.path.exists(subdir_path):
-        os.makedirs(subdir_path, exist_ok=True)
-
-    if os.path.exists(compile_logs_dir):
-        for filename in os.listdir(compile_logs_dir):
-            shutil.move(os.path.join(compile_logs_dir, filename), subdir_path)
-
-    for filename in os.listdir(REPORT_DIR):
-        if (re.match(r"test\d+\.(png|ppm|gif)$", filename) or
-            filename.startswith("screenshot-")):
-            shutil.move(os.path.join(REPORT_DIR, filename), subdir_path)
-
-    screenshot_map = defaultdict(list)
-    for fname in os.listdir(subdir_path):
-        if fname.endswith((".png", ".gif")):
-            m = re.match(r"screenshot-[^-]+-(\d+)(?:-\d+)?\.(png|gif)$", fname)
-            if m:
-                step_num = int(m.group(1))
-                screenshot_map[step_num].append(fname)

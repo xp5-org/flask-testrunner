@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+    
 <head>
     <meta charset="utf-8">
     <title>Test Builder</title>
@@ -34,133 +35,224 @@ body {
     background: #bbb;
 }
 
+
 #builder {
     flex: 1;
     display: flex;
     flex-direction: column;
-    height: 100%;
+    height: 100vh; /* Force full height */
     background: white;
 }
 
-/* Container for all controls/inputs at the top right */
 #controls {
+    flex-shrink: 0; /* Prevents controls from resizing */
     padding: 20px;
     border-bottom: 1px solid #eee;
     background: #fff;
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
 }
 
-/* Container for the code output at the bottom right */
-#output-container {
+#param-container {
     flex: 1;
-    padding: 20px;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    padding: 20px;
+    overflow: hidden; /* Important for internal scrolling */
 }
 
 .step {
     position: relative;
-    margin: 12px 0;
-    padding: 10px;
+    /* 5x Spacing: increased margin for breathing room */
+    margin: 5px 0; 
+    /* Perimeter: heavy padding for a larger click target */
+    padding: 10px; 
     background: white;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    /* Square perimeter: clear solid border */
+    border: 2px solid #ddd; 
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.2s ease;
+    /* Shadow makes the "hit area" more visible */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.step:hover {
+    border-color: #bbb;
+    background: #fdfdfd;
 }
 
 .dot {
     position: absolute;
+    /* Keeps the dot on the timeline line regardless of step size */
     left: -38px;
     top: 50%;
     transform: translateY(-50%);
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
     background: #333;
     border-radius: 50%;
-    border: 2px solid #fff;
+    border: 3px solid #fff;
     z-index: 2;
 }
 
 .selected {
     background: #eef6ff;
     border-color: #007bff;
+    border-width: 2px;
     font-weight: bold;
+    box-shadow: 0 4px 8px rgba(0, 123, 255, 0.15);
 }
 
-.group {
+/* Make the text inside the step take up the space */
+.step span {
+    flex: 1;
+    pointer-events: none; /* Clicks pass through to the div */
+}
+
+#param-table-wrapper {
+    height: 150px; 
+    overflow-y: auto;
     border: 1px solid #eee;
-    padding: 10px;
-    border-radius: 6px;
-    background: #fafafa;
-}
-
-.row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
     margin-bottom: 10px;
+    flex-shrink: 0; /* Prevents table area from shrinking */
 }
 
-pre {
+#param-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+/* FIX: Ensure the JSON output takes the remaining space and stays there */
+pre#output {
+    flex: 1;
     background: #222;
     color: #adff2f;
     padding: 15px;
-    border-radius: 5px;
+    border-radius: 4px;
     overflow: auto;
-    margin: 0;
-    flex: 1;
     font-family: monospace;
+    margin: 0;
+}
+
+/* Fix for the highlight jumping */
+.json-highlight {
+    background-color: rgba(0, 123, 255, 0.15);
+    border-left: 4px solid #007bff;
+    display: block; 
+    margin: 0 -15px; /* Pulls the highlight into the padding of the <pre> */
+    padding: 0 15px;
+    width: calc(100% + 30px);
 }
 
 button { padding: 6px 12px; cursor: pointer; }
 .primary-btn { background: #007bff; color: white; border: none; border-radius: 4px; }
+
+
+/* #param-split {
+    flex: 1;
+    display: flex;
+    gap: 20px;
+    overflow: hidden;
+} */
+
+#param-split {
+    flex: 0 0 20%;
+    min-height: 180px;
+}
+
+
+#param-left {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#param-right {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
 </style>
+
 </head>
-<body>
 
-<div id="timeline">
-    <div id="line"></div>
-    <div id="steps"></div>
-</div>
+<body style="margin:0; height:100vh; display:flex; flex-direction:column;">
 
-<div id="builder">
-    <div id="controls">
-        <div class="row">
-            <div class="group">
-                <label>System:</label>
-                <select id="system-filter" onchange="renderTests(this.value)">
-                    <option value="all">All Systems</option>
-                </select>
-                <label>Source Test:</label>
-                <select id="testlist" onchange="updateFields()"></select>
-            </div>
-            
-            <div class="group">
-                <strong>Status:</strong> <span id="insertLabel">Insert at end</span>
-                <select id="moveTarget"></select>
-                <button onclick="moveStep()">Move Step</button>
-            </div>
+    <!-- Navbar at top -->
+    <header style="height:50px; width:100%; background:#007bff; color:white; display:flex; align-items:center; padding:0 20px;">
+        {% include "navbar.html" %}
+    </header>
+
+    <!-- Main content: timeline + builder -->
+    <div style="flex:1; display:flex; flex-direction:row; overflow:hidden;">
+
+        <!-- Timeline sidebar -->
+        <div id="timeline" style="width:350px; border-right:1px solid #ccc; position:relative; padding:20px 10px 20px 60px; overflow-y:auto; background:#f4f4f4;">
+            <div id="line" style="position:absolute; left:30px; top:0; bottom:0; width:2px; background:#bbb;"></div>
+            <div id="steps"></div>
         </div>
 
-        <div class="row">
-            <select id="main"></select>
-            <select id="sub"></select>
-            <input id="param" placeholder="Parameter">
-            <button class="primary-btn" onclick="addStep()">Add Step</button>
-            <button onclick="updateStep()">Update Selected</button>
-            <button onclick="sendSteps()" style="background: #28a745; color: white; border: none; border-radius: 4px;">Sync to Flask</button>
+        <!-- Builder main area -->
+        <div id="builder" style="flex:1; display:flex; flex-direction:column; background:white; overflow:hidden;">
+
+            <!-- Controls at top of builder -->
+            <div id="controls" style="flex-shrink:0; padding:20px; border-bottom:1px solid #eee; display:flex; flex-direction:column; gap:10px;">
+                <div class="row" style="display:flex; gap:20px; flex-wrap:wrap;">
+                    <div class="group">
+                        <label>System:</label>
+                        <select id="system-filter" onchange="renderTests(this.value)">
+                            <option value="all">All Systems</option>
+                        </select>
+                        <label>Source Test:</label>
+                        <select id="testlist" onchange="updateFields()"></select>
+                    </div>
+                    
+                    <div class="group">
+                        <strong>Status:</strong> <span id="insertLabel">Insert at end</span>
+                        <select id="moveTarget"></select>
+                        <button onclick="moveStep()">Move Step</button>
+                        <button onclick="sendSteps()" style="background:#28a745;color:white;border:none;border-radius:4px;margin-left:20px;">Sync to Flask</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Parameter and JSON output area -->
+            <div id="param-container" style="flex:1; display:flex; flex-direction:column; padding:20px; overflow:hidden;">
+                
+                <!-- Action + Parameters split -->
+                <div id="param-split" style="display:flex; flex:0 0 auto; gap:20px; margin-bottom:10px;">
+                    <div id="param-left" style="flex:1; display:flex; flex-direction:column; gap:10px;">
+                        <label><strong>Action:</strong></label>
+                        <select id="main"></select>
+                        <hr style="width:100%; border:0; border-top:1px solid #eee;">
+                        <button class="primary-btn" onclick="addStep()">Add Step</button>
+                        <button onclick="updateStep()">Update Selected</button>
+                    </div>
+
+                    <div id="param-right" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+                        <label><strong>Parameters:</strong></label>
+                        <div id="param-table-wrapper" style="height:150px; overflow-y:auto; border:1px solid #eee; flex-shrink:0;">
+                            <table id="param-table">
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <label style="margin-top:10px;"><strong>JSON Output:</strong></label>
+                <pre id="output" style="flex:1; background:#222; color:#adff2f; padding:15px; border-radius:4px; overflow:auto; font-family:monospace; margin:0;">{}</pre>
+
+            </div>
         </div>
     </div>
 
-    <div id="output-container">
-        <label style="margin-bottom: 5px;"><strong>JSON Output:</strong></label>
-        <pre id="output">{}</pre>
-    </div>
-</div>
+
 
 <<script>
 const schema = {{ schema|tojson }};
@@ -169,12 +261,10 @@ let selectedIndex = null;
 let allTestData = [];
 
 const mainSel = document.getElementById("main");
-const subSel = document.getElementById("sub");
 const paramInput = document.getElementById("param");
 const insertLabel = document.getElementById("insertLabel");
 const moveTarget = document.getElementById("moveTarget");
 const testListSel = document.getElementById("testlist");
-
 testListSel.addEventListener('change', render);
 
 Object.keys(schema).forEach(k => {
@@ -184,21 +274,24 @@ Object.keys(schema).forEach(k => {
     mainSel.appendChild(o);
 });
 
+
 function loadSub() {
-    subSel.innerHTML = "";
     const currentAction = schema[mainSel.value];
     if (currentAction) {
         Object.keys(currentAction).forEach(k => {
             const o = document.createElement("option");
             o.value = k;
             o.textContent = k;
-            subSel.appendChild(o);
         });
     }
 }
 
-mainSel.onchange = loadSub;
-loadSub();
+
+mainSel.onchange = () => {
+    loadSub();
+    renderParamTable(schema[mainSel.value] || {}); // remove [subSel.value]
+};
+
 
 function loadTests() {
     fetch('/testfile_list')
@@ -226,6 +319,7 @@ function loadTests() {
         });
 }
 
+
 function renderTests(filter) {
     const testListSel = document.getElementById("testlist");
     testListSel.innerHTML = "<option value=''>-- Select a Test --</option>";
@@ -241,6 +335,7 @@ function renderTests(filter) {
         testListSel.appendChild(opt);
     });
 }
+
 
 function updateFields() {
     const testSlug = document.getElementById("testlist").value;
@@ -261,23 +356,19 @@ function updateFields() {
         });
 }
 
-/* HELPER: Always creates the object in the same order */
+
 function createStepObject() {
     const currentAction = mainSel.value;
-    const currentSub = subSel.value;
-    const templateParams = schema[currentAction][currentSub] || { "string": "" };
-    
-    let finalParams = { ...templateParams };
-    if (finalParams.hasOwnProperty('string')) {
-        finalParams.string = paramInput.value;
-    }
+    const templateParams = schema[currentAction] || { "string": "" };
+    const finalParams = getParamValuesFromTable();
 
     return {
-        "action": currentAction,
-        "param": finalParams,
-        "subaction": currentSub
+        action: currentAction,
+        param: finalParams,
+        subaction: "" 
     };
 }
+
 
 function addStep() {
     const newStep = createStepObject();
@@ -289,24 +380,67 @@ function addStep() {
     render();
 }
 
+
 function updateStep() {
     if (selectedIndex === null) return;
     steps[selectedIndex] = createStepObject();
     render();
 }
 
+
 function selectStep(index) {
     selectedIndex = (selectedIndex === index) ? null : index;
     if (selectedIndex !== null) {
         const s = steps[selectedIndex];
         mainSel.value = s.action;
-        loadSub();
-        subSel.value = s.subaction;
-        // Check if param is an object or string to avoid [object Object] in input
-        paramInput.value = (s.param && typeof s.param === 'object') ? (s.param.string || "") : (s.param || "");
+        renderParamTable(schema[s.action] || {}, s.param);
+    } else {
+        renderParamTable({}, {});
     }
     render();
 }
+
+
+function renderHighlightedJSON() {
+    const outputPre = document.getElementById("output");
+    const currentTestModule = document.getElementById("testlist").value;
+    const jsonObj = { testid: currentTestModule, steps: steps };
+
+    function renderValue(value, parentKey = null, index = null, depth = 0) {
+        const indent = "  ".repeat(depth);
+        const childIndent = "  ".repeat(depth + 1);
+
+        if (Array.isArray(value)) {
+            if (value.length === 0) return "[]";
+            const items = value.map((v, i) => {
+                const isSelected = (parentKey === "steps" && i === selectedIndex);
+                const valStr = renderValue(v, parentKey, i, depth + 1);
+                const comma = (i === value.length - 1) ? "" : ",";
+                
+                // If selected comma stays outside span
+                if (isSelected) {
+                    return `<span class="json-highlight">${valStr}</span>${comma}`;
+                }
+                return valStr + comma;
+            });
+            return `[\n${items.join("\n")}\n${indent}]`;
+        } 
+        
+        if (value && typeof value === "object") {
+            const props = Object.keys(value).map(k => {
+                const val = renderValue(value[k], k, null, depth + 1);
+                return `${childIndent}"${k}": ${val}`;
+            });
+            return `{\n${props.join(",\n")}\n${indent}}`;
+        } 
+        
+        if (typeof value === "string") return `"${value}"`;
+        return String(value);
+    }
+
+    outputPre.innerHTML = renderValue(jsonObj, null, null, 0);
+}
+
 
 function moveStep() {
     if (selectedIndex === null || steps.length < 2) return;
@@ -320,6 +454,7 @@ function moveStep() {
     selectedIndex = adjustedIdx;
     render();
 }
+
 
 function render() {
     const stepsDiv = document.getElementById("steps");
@@ -373,11 +508,9 @@ function render() {
     }
 
     const currentTestModule = document.getElementById("testlist").value;
-    document.getElementById("output").textContent = JSON.stringify({
-        testid: currentTestModule,
-        steps: steps
-    }, null, 2);
+    renderHighlightedJSON();
 }
+
 
 function sendSteps() {
     const testListSel = document.getElementById("testlist");
@@ -412,9 +545,44 @@ function sendSteps() {
     .catch(err => alert("Failed to sync: " + err));
 }
 
+
+function renderParamTable(templateParams, currentValues={}) {
+    const tbody = document.querySelector("#param-table tbody");
+    tbody.innerHTML = "";
+    
+    Object.keys(templateParams).forEach(key => {
+        const tr = document.createElement("tr");
+        
+        const tdKey = document.createElement("td");
+        tdKey.textContent = key;
+        tr.appendChild(tdKey);
+
+        const tdVal = document.createElement("td");
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = (currentValues[key] !== undefined) ? currentValues[key] : templateParams[key];
+        input.dataset.paramKey = key;
+        tdVal.appendChild(input);
+        tr.appendChild(tdVal);
+
+        tbody.appendChild(tr);
+    });
+}
+
+
+function getParamValuesFromTable() {
+    const values = {};
+    document.querySelectorAll("#param-table input").forEach(inp => {
+        values[inp.dataset.paramKey] = inp.value;
+    });
+    return values;
+}
+
+
 loadTests();
 render();
-</script>
 
+
+</script>
 </body>
 </html>

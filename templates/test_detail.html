@@ -88,6 +88,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
 <body>
 
+<body style="margin:0; padding:0;">
+    <div id="navbar" style="width:100%;">
+        {% include "navbar.html" %}
+    </div>
+
+    <div id="main-content" style="max-width:600px; margin:0 auto; padding:20px;">
+        <pre>{{ paths | tojson(indent=2) }}</pre>
+
 
 
 <h1>Test Details: {{ testname }}</h1>

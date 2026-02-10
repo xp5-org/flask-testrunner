@@ -1,4 +1,5 @@
 import os
+import re
 import threading
 import json
 import sys
@@ -30,38 +31,32 @@ if TESTSRC_TESTLISTDIR not in sys.path:
 
 
 
+@app.context_processor
+def inject_nav_and_paths():
+    return {
+        "nav_actions": build_nav(app),
+        "paths": {}  # default empty dict so tojson never fails
+    }
+
+
+
+def nav(label):
+    def decorator(f):
+        f.nav_label = label
+        return f
+    return decorator
+
+
+
+
 @app.route('/favicon.ico')
 def favicon():
+    paths = {"mode": "home"}
     return app.send_static_file('favicon.ico')
 
 
-@app.route("/testbuilder", methods=["GET", "POST"])
-def testbuilder():
-    proj_dir = "/testsrc/pyhelpers"
-    dispatch = dispatchhelper.load_step_dispatch(proj_dir)
-    schemas = dispatchhelper.PROJECT_STEP_SCHEMAS.get(proj_dir, {})
 
-    if request.method == "POST":
-        data = request.json
-        test_id = data.get("testid") # e.g. "vic20src.dispatchtest1..."
-        steps = data.get("steps", [])
 
-        if not test_id:
-            return jsonify({"status": "error", "message": "No test ID provided"}), 400
-
-        success, message = sync_test_steps(test_id, steps)
-        
-        if success:
-            return jsonify({"status": "ok", "message": message})
-        else:
-            return jsonify({"status": "error", "message": message}), 500
-
-    output = {
-        "functions": list(dispatch.keys()),
-        "schemas": schemas
-    }
-    action_schema = get_dynamic_action_schema(output)
-    return render_template("testbuilder.html", schema=action_schema)
 
 
 @app.route("/api/teststeps/<path:module_path>", methods=["GET"])
@@ -83,22 +78,73 @@ def get_test_steps(module_path):
     if testlist_path is None:
         abort(404)
 
+    # --- STRATEGY 1: Try to Import and read CONFIG['steps'] ---
+    found_steps = []
     module_name = "_testlist_%s" % abs(hash(testlist_path))
-    spec = importlib.util.spec_from_file_location(module_name, testlist_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    
+
     try:
-        spec.loader.exec_module(module)
+        spec = importlib.util.spec_from_file_location(module_name, testlist_path)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            
+            # Execute the module
+            spec.loader.exec_module(module)
+            
+            # extract steps if CONFIG exists
+            if hasattr(module, 'CONFIG'):
+                found_steps = module.CONFIG.get("steps", [])
+                
     except Exception:
+        # If the file crashes on import (syntax error, runtime error), 
+        # just ignore it and fall through to the text scan.
+        found_steps = []
+    finally:
+        # Always clean up sys.modules to prevent pollution
         if module_name in sys.modules:
             del sys.modules[module_name]
+
+    # If we found valid steps via import, return them immediately
+    if found_steps:
+        return jsonify(found_steps)
+
+    # We reach here if import failed OR if CONFIG['steps'] was empty/missing
+    try:
+        with open(testlist_path, "r") as f:
+            lines = f.readlines()
+    except Exception:
         abort(500)
 
-    return jsonify(module.CONFIG.get("steps", []))
+    step_actions = []
+    decorator_active = False
+
+    for line in lines:
+        stripped = line.strip()
+        # Using the regex from your working live version
+        if re.match(r"^@register_mytest\b", stripped):
+            decorator_active = True
+        elif decorator_active:
+            if stripped.startswith("def "):
+                match = re.match(r"def (\w+)\s*\(", stripped)
+                if match:
+                    func_name = match.group(1)
+                    step_actions.append({
+                        "action": "MANUAL_EDIT_ONLY" + func_name,
+                        "param": {"string": ""},
+                        "subaction": ""
+                    })
+                decorator_active = False
+            elif stripped.startswith("@") or stripped == "":
+                continue
+            else:
+                decorator_active = False
+
+    return jsonify(step_actions)
+
 
 
 @app.route("/")
+@nav("Home")
 def index():
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
@@ -115,8 +161,61 @@ def index():
 
 
 @app.route("/cloneproj")
+@nav("Clone")
 def cloneproj():
     return render_template("cloneproj.html")
+
+
+
+
+
+@app.route("/testbuilder", methods=["GET", "POST"])
+@nav("Testbuilder")
+def testbuilder():
+    proj_dir = "/testsrc/pyhelpers"
+    raw_dispatch = dispatchhelper.load_step_dispatch(proj_dir)
+    schemas = dispatchhelper.PROJECT_STEP_SCHEMAS.get(proj_dir, {})
+
+    dispatch = {}
+    for name, func in raw_dispatch.items():
+        if getattr(func, "_is_teststep", False):
+            dispatch[name] = func
+
+    if request.method == "POST":
+        data = request.json
+        test_id = data.get("testid")
+        steps = data.get("steps", [])
+
+        if not test_id:
+            return jsonify({"status": "error", "message": "No test ID provided"}), 400
+
+        # copy kwargs from schemma
+        for step in steps:
+            func_name = step.get("action")
+            if func_name in schemas:
+                for k, v in schemas[func_name].items():
+                    step.setdefault("param", {})[k] = step["param"].get(k, v)
+
+        success, message = sync_test_steps(test_id, steps)
+        if success:
+            return jsonify({"status": "ok", "message": message})
+        else:
+            return jsonify({"status": "error", "message": message}), 500
+
+    output = {
+        "functions": list(dispatch.keys()),
+        "schemas": schemas
+    }
+
+    action_schema = get_dynamic_action_schema(output)
+    return render_template("testbuilder.html", schema=action_schema)
+
+
+
+
+
+
+
 
 
 @app.route("/failed_tests")
@@ -188,17 +287,19 @@ def view_report(filepath):
 
 @app.route('/module_path')
 def module_path():
-    import importlib, os
+    import importlib
     src_module = request.args.get('src_module')
     if not src_module:
         return jsonify({"status": "error", "message": "No module specified"}), 400
     try:
         mod = importlib.import_module(src_module)
-        src_file = os.path.abspath(mod.__file__)
-        src_dir = os.path.dirname(src_file)
-        return jsonify({"status": "success", "src_path": src_dir})
+        cfg = getattr(mod, "CONFIG", None)
+        if cfg is None:
+            return jsonify({"status": "error", "message": "No config found in module"}), 404
+        return jsonify({"status": "success", "config": cfg})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 
 @app.route('/clone_as_new')
@@ -327,23 +428,12 @@ def test_details(test_id):
 
 # need to move these to helper files
 TESTLIST_ROOT = "/testsrc/sourcedir"
+
 def get_dynamic_action_schema(output_data):
     action_schema = {}
     
     for func_name in output_data["functions"]:
-        parts = func_name.split("_", 1)
-        
-        if len(parts) == 2:
-            category = parts[0]
-            action = parts[1]
-        else:
-            category = "general"
-            action = func_name
-
-        if category not in action_schema:
-            action_schema[category] = {}
-
-        action_schema[category][action] = output_data["schemas"].get(func_name, {})
+        action_schema[func_name] = output_data["schemas"].get(func_name, {})
         
     return action_schema
 
@@ -397,7 +487,7 @@ def update_test_steps_in_file(file_path, steps):
         print("[DEBUG] ERROR: Could not find 'steps' key in file.")
         return
 
-    new_steps_block = json.dumps(steps, indent=8).replace("true", "True").replace("false", "False")
+    new_steps_block = json.dumps(steps, indent=8).replace("true", "True").replace("false", "False").replace("null", "None")
     
     with open(file_path, 'w') as f:
         f.writelines(header)
@@ -409,6 +499,15 @@ def update_test_steps_in_file(file_path, steps):
             f.write("\n}") # Close the dict if footer was empty
 
     print(f"[DEBUG] File updated successfully: {file_path}")
+
+
+def build_nav(app):
+    items = []
+    for endpoint, view in app.view_functions.items():
+        label = getattr(view, "nav_label", None)
+        if label:
+            items.append({"name": label, "endpoint": endpoint})
+    return items
 
 
 
