@@ -53,15 +53,15 @@
             <div class="row section-head"><div class="cell" colspan="2">2. Target Definition</div></div>
 
             <div class="row">
-                <div class="cell label-cell">Target ID</div>
+                <div class="cell label-cell">New project dir</div>
                 <div class="cell"><input type="text" id="target_id" placeholder="Folder/Project Name"></div>
             </div>
             <div class="row">
-                <div class="cell label-cell">Target Type</div>
+                <div class="cell label-cell">Run button label</div>
                 <div class="cell"><input type="text" id="target_type"></div>
             </div>
             <div class="row">
-                <div class="cell label-cell">Target Path</div>
+                <div class="cell label-cell">New Dir Path</div>
                 <div class="cell"><input type="text" id="target_path"></div>
             </div>
 
@@ -88,7 +88,7 @@
                 <div class="cell"><input type="text" id="cfg_linkerconf"></div>
             </div>
             <div class="row">
-                <div class="cell label-cell">Testfile Name</div>
+                <div class="cell label-cell">Testfile Name (primary sort key)</div>
                 <div class="cell">
                     <div class="input-group">
                         <span class="prefix">__testfile__</span>
@@ -103,41 +103,42 @@
     </div>
 
     <script>
-        let allTestData = [];
+let allTestData = [];
+let currentProjBase = ""; // Global to store the base directory
 
-        function loadTests() {
-            fetch('/testfile_list')
-                .then(r => r.json())
-                .then(data => {
-                    allTestData = data;
-                    const systemFilter = document.getElementById('system-filter');
-                    const systemsSet = new Set();
-                    data.forEach(item => { if (item.system) systemsSet.add(item.system); });
-                    Array.from(systemsSet).sort().forEach(sys => {
-                        const opt = document.createElement('option');
-                        opt.value = sys; opt.textContent = sys;
-                        systemFilter.appendChild(opt);
-                    });
-                    renderTests('all');
-                });
-        }
-
-        function renderTests(filter) {
-            const sel = document.getElementById('testlist');
-            sel.innerHTML = '<option value="">-- Select Source Test --</option>';
-            let filtered = filter === 'all' ? allTestData : allTestData.filter(item => item.system === filter);
-            filtered.sort((a, b) => (a.id || "").localeCompare(b.id || ""));
-            filtered.forEach(item => {
+function loadTests() {
+    fetch('/testfile_list')
+        .then(r => r.json())
+        .then(data => {
+            allTestData = data;
+            const systemFilter = document.getElementById('system-filter');
+            const systemsSet = new Set();
+            data.forEach(item => { if (item.system) systemsSet.add(item.system); });
+            Array.from(systemsSet).sort().forEach(sys => {
                 const opt = document.createElement('option');
-                opt.value = item.module;
-                opt.dataset.id = item.id;
-                opt.dataset.primaryType = (item.types && Object.keys(item.types)[0]) || 'build';
-                opt.textContent = `${item.id} [${Object.keys(item.types || {}).join(', ')}]`;
-                sel.appendChild(opt);
+                opt.value = sys; opt.textContent = sys;
+                systemFilter.appendChild(opt);
             });
-        }
+            renderTests('all');
+        });
+}
 
-        document.getElementById('system-filter').addEventListener('change', function() { renderTests(this.value); });
+function renderTests(filter) {
+    const sel = document.getElementById('testlist');
+    sel.innerHTML = '<option value="">-- Select Source Test --</option>';
+    let filtered = filter === 'all' ? allTestData : allTestData.filter(item => item.system === filter);
+    filtered.sort((a, b) => (a.id || "").localeCompare(b.id || ""));
+    filtered.forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = item.module;
+        opt.dataset.id = item.id;
+        opt.dataset.primaryType = (item.types && Object.keys(item.types)[0]) || 'build';
+        opt.textContent = `${item.id} [${Object.keys(item.types || {}).join(', ')}]`;
+        sel.appendChild(opt);
+    });
+}
+
+document.getElementById('system-filter').addEventListener('change', function() { renderTests(this.value); });
 
 function updateFields() {
     const sel = document.getElementById('testlist');
@@ -149,81 +150,80 @@ function updateFields() {
         document.getElementById('cfg_testfile').value = selected.dataset.id;
     }
 
-fetch(`/module_path?src_module=${encodeURIComponent(selected.value)}`)
-    .then(r => r.json())
-    .then(res => {
-        if (res.status === 'success' && res.config) {
-            const cfg = res.config;
+    fetch(`/module_path?src_module=${encodeURIComponent(selected.value)}`)
+        .then(r => r.json())
+        .then(res => {
+            if (res.status === 'success' && res.config) {
+                const cfg = res.config;
+                const paths = cfg.paths || {};
+                
+                document.getElementById('src_path_display').value = paths.src || '';
 
-            const paths = cfg.paths || {};
-            const srcPath = paths.src || '';
-            document.getElementById('src_path_display').value = srcPath;
+                // Store projbasedir and setup Target ID
+                currentProjBase = cfg.projbasedir || '';
+                const targetIdValue = selected.dataset.id + '_copy';
+                document.getElementById('target_id').value = targetIdValue;
+                
+                // Set initial Target Path
+                document.getElementById('target_path').value = currentProjBase + targetIdValue + '/';
 
-            const targetId = selected.dataset.id + '_copy';
-            const projBase = cfg.projbasedir || '';
-            document.getElementById('target_path').value = projBase + targetId + '/';
-
-            loadConfigFields({
-                cmainfile: cfg.cmainfile || '',
-                archtype: cfg.archtype || '',
-                platform: cfg.platform || '',
-                viceconf: paths.viceconf || '',
-                linkerconf: cfg.linkerconf || ''
-            });
-        }
-    });
-
-}
-
-
-
-        document.getElementById('cfg_testfile').addEventListener('input', function() { this.dataset.userEdited = true; });
-
-        function cloneProject() {
-            const status = document.getElementById('status');
-            status.style.display = 'block';
-            status.textContent = 'Initialising...';
-            
-            const payload = {
-                src_module: document.getElementById('testlist').value,
-                target_id: document.getElementById('target_id').value.trim(),
-                target_type: document.getElementById('target_type').value.trim(),
-                target_path: document.getElementById('target_path').value.trim(),
-                cmainfile: document.getElementById('cfg_cmainfile').value.trim(),
-                archtype: document.getElementById('cfg_archtype').value.trim(),
-                platform: document.getElementById('cfg_platform').value.trim(),
-                viceconf: document.getElementById('cfg_viceconf').value.trim(),
-                linkerconf: document.getElementById('cfg_linkerconf').value.trim(),
-                testfile_name: document.getElementById('cfg_testfile').value.trim()
-            };
-
-            fetch(`/clone_as_new?${new URLSearchParams(payload)}`)
-                .then(r => r.json())
-                .then(res => {
-                    status.textContent = res.status === 'success' ? 'Success! Path: ' + res.path : 'Error: ' + res.message;
-                    status.style.background = res.status === 'success' ? '#f0fff0' : '#fff0f0';
-                    status.style.color = res.status === 'success' ? 'green' : 'red';
+                loadConfigFields({
+                    cmainfile: cfg.cmainfile || '',
+                    archtype: cfg.archtype || '',
+                    platform: cfg.platform || '',
+                    viceconf: paths.viceconf || '',
+                    linkerconf: cfg.linkerconf || ''
                 });
-        }
-
-        function loadConfigFields(cfg) {
-            document.getElementById('cfg_cmainfile').value = cfg.cmainfile || '';
-            document.getElementById('cfg_archtype').value = cfg.archtype || '';
-            document.getElementById('cfg_platform').value = cfg.platform || '';
-            document.getElementById('cfg_viceconf').value = cfg.viceconf || '';
-            document.getElementById('cfg_linkerconf').value = cfg.linkerconf || '';
-        }
-
-        document.getElementById('target_id').addEventListener('input', function() {
-            const src = document.getElementById('src_path_display').value;
-            if (src && this.value.trim()) {
-                const sep = src.includes('\\') ? '\\' : '/';
-                const parts = src.split(/[\\/]/); parts.pop();
-                document.getElementById('target_path').value = parts.join(sep) + sep + this.value.trim() + sep;
             }
         });
+}
 
-        loadTests();
+document.getElementById('cfg_testfile').addEventListener('input', function() { this.dataset.userEdited = true; });
+
+// Updated listener to use currentProjBase
+document.getElementById('target_id').addEventListener('input', function() {
+    const name = this.value.trim();
+    if (currentProjBase && name) {
+        document.getElementById('target_path').value = currentProjBase + name + '/';
+    }
+});
+
+function cloneProject() {
+    const status = document.getElementById('status');
+    status.style.display = 'block';
+    status.textContent = 'Initialising...';
+    
+    const payload = {
+        src_module: document.getElementById('testlist').value,
+        target_id: document.getElementById('target_id').value.trim(),
+        target_type: document.getElementById('target_type').value.trim(),
+        target_path: document.getElementById('target_path').value.trim(),
+        cmainfile: document.getElementById('cfg_cmainfile').value.trim(),
+        archtype: document.getElementById('cfg_archtype').value.trim(),
+        platform: document.getElementById('cfg_platform').value.trim(),
+        viceconf: document.getElementById('cfg_viceconf').value.trim(),
+        linkerconf: document.getElementById('cfg_linkerconf').value.trim(),
+        testfile_name: document.getElementById('cfg_testfile').value.trim()
+    };
+
+    fetch(`/clone_as_new?${new URLSearchParams(payload)}`)
+        .then(r => r.json())
+        .then(res => {
+            status.textContent = res.status === 'success' ? 'Success! Path: ' + res.path : 'Error: ' + res.message;
+            status.style.background = res.status === 'success' ? '#f0fff0' : '#fff0f0';
+            status.style.color = res.status === 'success' ? 'green' : 'red';
+        });
+}
+
+function loadConfigFields(cfg) {
+    document.getElementById('cfg_cmainfile').value = cfg.cmainfile || '';
+    document.getElementById('cfg_archtype').value = cfg.archtype || '';
+    document.getElementById('cfg_platform').value = cfg.platform || '';
+    document.getElementById('cfg_viceconf').value = cfg.viceconf || '';
+    document.getElementById('cfg_linkerconf').value = cfg.linkerconf || '';
+}
+
+loadTests();
     </script>
 </body>
 </html>
