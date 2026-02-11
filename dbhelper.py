@@ -116,52 +116,45 @@ class ReportDB:
 
 
     def get_failed_steps_log(self, testparentname, test_types="*"):
-        conn = self._connect()
-        cur = conn.cursor()
-        # name = name of test step
-        # test_types = build/run test type
-        # testparentname = primary key to find a test
-        # testparentname + test_type = find a specific test
+            conn = self._connect()
+            cur = conn.cursor()
 
+            sql = """
+                SELECT testparentname, test_types, name, output
+                FROM test_result
+                WHERE report_id = (
+                    SELECT MAX(report_id)
+                    FROM test_result
+                    WHERE testparentname = ?
+            """
+            params = [testparentname]
 
-        sql = "SELECT MAX(report_id) FROM test_result WHERE testparentname = ?"
-        params = [testparentname]
+            if test_types != "*":
+                sql += " AND test_types = ?"
+                params.append(test_types)
 
-        if test_types != "*":
-            sql += " AND test_types = ?"
-            params.append(test_types)
+            sql += """
+                )
+                AND status IN ('FAIL', 'ERROR')
+                ORDER BY test_index ASC
+            """
 
-        cur.execute(sql, tuple(params))
-        res = cur.fetchone()
-
-        if not res or res[0] is None:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
             conn.close()
-            return []
 
-        latest_id_for_test = res[0]
+            results = [
+                {
+                    "testparentname": r[0],
+                    "test_type": r[1],
+                    "name": r[2],
+                    "output": r[3]
+                }
+                for r in rows
+            ]
+            return results
 
-        cur.execute("""
-            SELECT testparentname, test_types, name, output
-            FROM test_result
-            WHERE report_id = ?
-            AND status IN ('FAIL', 'ERROR')
-            ORDER BY test_index ASC
-        """, (latest_id_for_test,))
 
-
-        rows = cur.fetchall()
-        conn.close()
-
-        results = [
-            {
-                "testparentname": r[0],
-                "test_type": r[1],
-                "name": r[2],
-                "output": r[3]
-            }
-            for r in rows
-        ]
-        return results
 
 
     def get_all_reports_summary(self, test_parent_name=None):
