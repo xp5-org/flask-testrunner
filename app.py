@@ -8,10 +8,11 @@ import dispatchhelper
 import importlib.util
 from appstate import progress_state
 from flask import Flask, render_template, send_from_directory, jsonify, request, abort
+from jinja2 import ChoiceLoader, FileSystemLoader
 import apphelpers, test_runner
-from dbhelper import ReportDB
-db = ReportDB()
+from dbhelper import ReportDB, db
 from appstate import build_nav, nav
+
 
 
 
@@ -30,9 +31,6 @@ DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
 #######################################
 if TESTSRC_TESTLISTDIR not in sys.path:
     sys.path.insert(0, TESTSRC_TESTLISTDIR)
-
-
-
 
 
 
@@ -95,7 +93,7 @@ def get_test_steps(module_path):
     if found_steps:
         return jsonify(found_steps)
 
-    # We reach here if import failed OR if CONFIG['steps'] was empty/missing
+    # if import failed OR if CONFIG['steps'] missing
     try:
         with open(testlist_path, "r") as f:
             lines = f.readlines()
@@ -107,7 +105,6 @@ def get_test_steps(module_path):
 
     for line in lines:
         stripped = line.strip()
-        # Using the regex from your working live version
         if re.match(r"^@register_mytest\b", stripped):
             decorator_active = True
         elif decorator_active:
@@ -149,12 +146,15 @@ def index():
 @app.route("/cloneproj")
 @nav("Clone")
 def cloneproj():
+    test_runner.reload_tests()
     return render_template("cloneproj.html")
 
 
-@app.route("/testbuilder", methods=["GET", "POST"])
+@app.route("/testbuilder", defaults={'testid': None}, methods=["GET", "POST"])
+@app.route("/testbuilder/<path:testid>", methods=["GET", "POST"])
 @nav("Testbuilder")
-def testbuilder():
+def testbuilder(testid):
+    test_runner.reload_tests()
     proj_dir = "/testsrc/pyhelpers"
     raw_dispatch = dispatchhelper.load_step_dispatch(proj_dir)
     schemas = dispatchhelper.PROJECT_STEP_SCHEMAS.get(proj_dir, {})
@@ -191,7 +191,7 @@ def testbuilder():
     }
 
     action_schema = get_dynamic_action_schema(output)
-    return render_template("testbuilder.html", schema=action_schema)
+    return render_template("testbuilder.html", schema=action_schema, initial_testid=testid)
 
 
 @app.route("/failed_tests")
@@ -277,6 +277,7 @@ def module_path():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+
 @app.route('/clone_as_new')
 def clone_as_new():
     from newprojecthelper import copybuildtest, copy_sourcedir
@@ -285,43 +286,38 @@ def clone_as_new():
 
     src_module = request.args.get('src_module')
     target_id = request.args.get('target_id')
-    target_type = request.args.get('target_type')
-    testlist_name = request.args.get('testlist_name')
-    testfile_name = request.args.get('testfile_name')
-    testfile_targetdir = request.args.get('target_path')
-
-    if not all([src_module, target_id, target_type]):
+    
+    if not all([src_module, target_id]):
         return jsonify({"status": "error", "message": "Missing parameters"}), 400
 
     try:
         mod = importlib.import_module(src_module)
-        src_file = os.path.abspath(mod.__file__)
-        src_dir = os.path.dirname(src_file)
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        testfile_path = os.path.abspath(mod.__file__)
+        testfile_src_dir = os.path.dirname(testfile_path)
 
-    try:
+        module_config = getattr(mod, 'CONFIG', {})
+        dst_dir_from_client = request.args.get('target_path')
+        
+        params = {**module_config, **request.args.to_dict()}
+
         dest_dir, testlist_file = copybuildtest(
-        src_dir, testfile_name, testlist_name,
-        dest_dir=testfile_targetdir,
-        cmainfile=request.args.get('cmainfile'),
-        testtype=request.args.get('target_type'),
-        archtype=request.args.get('archtype'),
-        platform=request.args.get('platform'),
-        viceconf=request.args.get('viceconf'),
-        linkerconf=request.args.get('linkerconf')
+            src_dir=testfile_src_dir,
+            outputname=target_id,
+            dest_dir=dst_dir_from_client,
+            testlist_name=request.args.get('testlist_name'),
+            **params
         )
-
-        copy_sourcedir(src_dir + '/src', dest_dir + '/src')
-
-        return jsonify({
-            "status": "success",
-            "path": dest_dir,
-            "src_path": src_dir,
-            "testlist_file": testlist_file
-        }), 200
+        
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+    return jsonify({
+        "status": "success",
+        "src_path": testfile_src_dir,
+        "dst_dir": dest_dir,
+        "testlist_file": testlist_file,
+        "config_used": module_config
+    }), 200
 
 
 @app.route("/test/<test_id>")
@@ -345,7 +341,6 @@ def test_details(test_id):
         for type_name in summary_types:
             summary_by_type.setdefault(type_name, []).append(s)
     
-    # This prints report statuses
     matching_tests = []
     for info in apphelpers.testfile_registry.values():
         if info.get("id") != test_id:
@@ -429,46 +424,44 @@ def sync_test_steps(module_name, new_steps):
 
 
 def update_test_steps_in_file(file_path, steps):
-    print(f"[DEBUG] Syncing file (No-Regex): {file_path}")
+    print(f"[DEBUG] Syncing file: {file_path}")
     
     with open(file_path, 'r') as f:
         lines = f.readlines()
 
-    header = []
-    footer = []
+    new_lines = []
+    iterator = iter(lines)
     found_steps = False
-    done_steps = False
 
-    for line in lines:
-        if not found_steps:
-            if '"steps": [' in line or "'steps': [" in line:
-                found_steps = True
-                header.append(line.split(':')[0] + ': ')
+    for line in iterator:
+        if not found_steps and ('"steps":' in line or "'steps':" in line):
+            found_steps = True
+            key_part = line.split(':')[0] + ': '
+            new_block = json.dumps(steps, indent=8).replace("true", "True").replace("false", "False").replace("null", "None")
+            
+            if ']' in line:
+                suffix = line.split(']', 1)[1]
+                new_lines.append(f"{key_part}{new_block}{suffix}")
             else:
-                header.append(line)
-        elif found_steps and not done_steps:
-            # find closing bracket of the steps list
-            if line.strip().startswith(']') or line.strip() == ']}':
-                done_steps = True
-                if '}' in line:
-                    footer.append('}\n')
-        elif done_steps:
-            footer.append(line)
+                new_lines.append(f"{key_part}{new_block}")
+                while True:
+                    try:
+                        next_line = next(iterator)
+                        if next_line.strip().startswith(']'):
+                            suffix = next_line.split(']', 1)[1]
+                            new_lines[-1] += suffix
+                            break
+                    except StopIteration:
+                        break
+        else:
+            new_lines.append(line)
 
     if not found_steps:
         print("[DEBUG] ERROR: Could not find 'steps' key in file.")
         return
 
-    new_steps_block = json.dumps(steps, indent=8).replace("true", "True").replace("false", "False").replace("null", "None")
-    
     with open(file_path, 'w') as f:
-        f.writelines(header)
-        f.write(new_steps_block)
-        if footer:
-            f.write(",\n") # Ensure comma if more config follows
-            f.writelines(footer)
-        else:
-            f.write("\n}") # Close the dict if footer was empty
+        f.writelines(new_lines)
 
     print(f"[DEBUG] File updated successfully: {file_path}")
 
@@ -482,9 +475,6 @@ if os.path.isfile(route_file):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     # add template dir as custom template path
-    from jinja2 import ChoiceLoader, FileSystemLoader
-
-    # after loading your custom routes
     projectB_template_dir = "/testsrc/flasktemplates"
 
     # combine existing loader with the new folder
@@ -501,21 +491,9 @@ if os.path.isfile(route_file):
 
 
 if __name__ == "__main__":
-    # dispatch addon debug
-    # from dispatchhelper import load_step_dispatch, get_step_schema
-    # project_path = "/testsrc/pyhelpers/"
-    # dispatch = load_step_dispatch(project_path)
-    # schemas = get_step_schema(project_path)
-    # output = {
-    #     "functions": list(dispatch.keys()),
-    #     "schemas": schemas
-    # }
-
-    # action_schema = get_dynamic_action_schema(output)
-    # print("JSONDEBUG: ", json.dumps(action_schema, indent=4))
-
-
     if not os.path.exists(DB_PATH):
         test_runner.db.init_report_db(DB_PATH)
-    app.run(host="0.0.0.0", port=8080, debug=True)
+
+    test_runner.reload_tests()
+    app.run(host="0.0.0.0", port=8080, debug=True, use_reloader=False)
 

@@ -1,13 +1,117 @@
 {% extends "base.html" %}
 
 {% block content %}
-<!-- {% include "navbar.html" %} -->
+
+
+<style>
+.step {
+    padding: 10px;
+    margin: 5px 0;
+    border: 1px solid #ddd;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    background: #fff;
+    transition: background 0.2s; 
+}
+
+/* The highlight rectangle */
+.step.selected {
+    border: 2px solid #007bff;
+    background-color: #e7f3ff;
+    outline: none;
+}
+
+.dot {
+    height: 10px;
+    width: 10px;
+    background-color: #bbb;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 10px;
+}
+
+.selected .dot {
+    background-color: #007bff;
+}
 
 
 
-<!-- <body style="margin:0; height:100vh; display:flex; flex-direction:column;"> -->
+#param-split {
+    display: flex;
+    gap: 20px;
+    width: 100%;
+}
 
-    <!-- Main content: timeline + builder -->
+#builder {
+    min-width: 0;
+}
+
+#param-container {
+    min-width: 0;
+}
+
+
+
+/* controls action dropdown */
+#param-left {
+    flex: 0 0 35%;
+    max-width: 30%;
+}
+
+#param-right {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+#param-table {
+    width: 100%;
+    table-layout: fixed;
+}
+
+#param-table td,
+#param-table th {
+    overflow: hidden;
+}
+
+#param-table input,
+#param-table select {
+    width: 100%;
+    box-sizing: border-box;
+}
+#param-table td:first-child,
+#param-table th:first-child {
+    width: 30%;
+}
+
+#param-table td:last-child,
+#param-table th:last-child {
+    width: 70%;
+}
+
+
+
+.action-item {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+}
+
+.action-item:hover {
+    background-color: #f8f9fa;
+}
+
+.action-item.active {
+    background-color: #007bff;
+    color: white;
+}
+
+
+</style>
+
+
     <div style="flex:1; display:flex; flex-direction:row; overflow:hidden;">
 
         <!-- Timeline sidebar -->
@@ -20,49 +124,69 @@
         <div id="builder" style="flex:1; display:flex; flex-direction:column; background:white; overflow:hidden;">
 
             <!-- Controls at top of builder -->
-            <div id="controls" style="flex-shrink:0; padding:20px; border-bottom:1px solid #eee; display:flex; flex-direction:column; gap:10px;">
-                <div class="row" style="display:flex; gap:20px; flex-wrap:wrap;">
-                    <div class="group">
-                        <label>System:</label>
-                        <select id="system-filter" onchange="renderTests(this.value)">
-                            <option value="all">All Systems</option>
-                        </select>
-                        <label>Source Test:</label>
-                        <select id="testlist" onchange="updateFields()"></select>
-                    </div>
-                    
-                    <div class="group">
-                        <strong>Status:</strong> <span id="insertLabel">Insert at end</span>
-                        <select id="moveTarget"></select>
-                        <button onclick="moveStep()">Move Step</button>
-                        <button onclick="sendSteps()" style="background:#28a745;color:white;border:none;border-radius:4px;margin-left:20px;">Sync to Flask</button>
-                    </div>
-                </div>
-            </div>
+<div id="controls" style="flex-shrink:0; padding:20px; border-bottom:1px solid #eee; display:flex; flex-direction:column; gap:10px;">
+
+    <div class="row" style="display:flex; gap:20px; flex-wrap:wrap;">
+        <div class="group">
+            <label for="system-filter">System:</label>
+            <select id="system-filter" name="system_filter" data-testid="system-select" aria-label="Filter by System" onchange="renderTests(this.value)">
+                <option value="all">All Systems</option>
+            </select>
+
+            <label for="testlist" style="margin-left: 15px;">Source Test:</label>
+            <select id="testlist" name="source_test" data-testid="test-select" onchange="updateFields()"></select>
+        </div>
+    </div>
+
+    <div class="row" style="display:flex; gap:20px; flex-wrap:wrap;">
+        <div class="group">
+            <label for="moveTarget">
+                <strong>Status:</strong> 
+                <span id="insertLabel">Insert at end</span>
+            </label>
+            
+            <select id="moveTarget" name="move_target" data-testid="move-step-select" aria-describedby="insertLabel"></select>
+            
+            <button onclick="moveStep()" data-testid="move-step-btn">Move Step</button>
+        </div>
+    </div>
+
+</div>
+
 
             <!-- Parameter and JSON output area -->
-            <div id="param-container" style="flex:1; display:flex; flex-direction:column; padding:20px; overflow:hidden;">
+            <div id="param-container" style="display:flex; flex-direction:column; padding:20px; overflow:hidden;">
                 
                 <!-- Action + Parameters split -->
                 <div id="param-split" style="display:flex; flex:0 0 auto; gap:20px; margin-bottom:10px;">
-                    <div id="param-left" style="flex:1; display:flex; flex-direction:column; gap:10px;">
-                        <label><strong>Action:</strong></label>
-                        <select id="main"></select>
-                        <hr style="width:100%; border:0; border-top:1px solid #eee;">
-                        <button class="primary-btn" onclick="addStep()">Add Step</button>
-                        <button onclick="updateStep()">Update Selected</button>
-                    </div>
+<div id="param-left" style="display:flex; flex-direction:column; gap:10px; height: 100%;">
+    <label for="action-search"><strong>Action:</strong></label>
+    
+    <input type="text" id="action-search" placeholder="Search actions..." 
+           onkeyup="filterActions()" 
+           style="width:100%; padding:5px; box-sizing:border-box;">
 
-                    <div id="param-right" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+    <div id="action-list" role="listbox" 
+         style="border:1px solid #ccc; height:300px; overflow-y:auto; background:#fff;">
+    </div>
+    
+    <hr style="width:100%; border:0; border-top:1px solid #eee;">
+    
+    <button class="primary-btn" onclick="addStep()" data-testid="add-step-btn">Add Step</button>
+    <button onclick="updateStep()" data-testid="update-step-btn">Update Selected</button>
+</div>
+
+                    <div id="param-right" style="display:flex; flex-direction:column; overflow:hidden;">
+
                         <label><strong>Parameters:</strong></label>
-                        <div id="param-table-wrapper" style="height:150px; overflow-y:auto; border:1px solid #eee; flex-shrink:0;">
+                        <div id="param-table-wrapper" style="height:280px; overflow-y:auto; border:1px solid #eee; flex-shrink:0;">
                             <table id="param-table">
                                 <tbody></tbody>
                             </table>
                         </div>
                     </div>
                 </div>
-
+                        <button onclick="sendSteps()" style="background:#28a745;color:white;border:none;border-radius:4px;margin-left:20px;">Sync to Flask</button>
                 <label style="margin-top:10px;"><strong>JSON Output:</strong></label>
                 <pre id="output" style="flex:1; background:#222; color:#adff2f; padding:15px; border-radius:4px; overflow:auto; font-family:monospace; margin:0;">{}</pre>
 
@@ -72,44 +196,65 @@
 
 
 
-<<script>
+<script>
+let currentSelectedAction = null;
+const initialTestId = "{{ initial_testid or '' }}";
 const schema = {{ schema|tojson }};
 let steps = [];
 let selectedIndex = null;
 let allTestData = [];
 
-const mainSel = document.getElementById("main");
-const paramInput = document.getElementById("param");
 const insertLabel = document.getElementById("insertLabel");
 const moveTarget = document.getElementById("moveTarget");
 const testListSel = document.getElementById("testlist");
-testListSel.addEventListener('change', render);
 
-Object.keys(schema).forEach(k => {
-    const o = document.createElement("option");
-    o.value = k;
-    o.textContent = k;
-    mainSel.appendChild(o);
-});
+testListSel.addEventListener('change', updateFields);
 
+function buildActionList() {
+    const listContainer = document.getElementById("action-list");
+    listContainer.innerHTML = "";
 
-function loadSub() {
-    const currentAction = schema[mainSel.value];
-    if (currentAction) {
-        Object.keys(currentAction).forEach(k => {
-            const o = document.createElement("option");
-            o.value = k;
-            o.textContent = k;
-        });
-    }
+    Object.keys(schema).sort().forEach(function (k) {
+        const item = document.createElement("div");
+        item.className = "action-item";
+        item.textContent = k;
+        item.setAttribute("role", "option");
+        item.setAttribute("data-action", k);
+        
+        item.onclick = function() {
+            selectAction(k, item);
+        };
+        
+        listContainer.appendChild(item);
+    });
 }
 
+function selectAction(actionName, element) {
+    document.querySelectorAll('.action-item').forEach(el => el.classList.remove('active'));
+    
+    if (element) {
+        element.classList.add('active');
+    } else {
+        const found = Array.from(document.querySelectorAll('.action-item'))
+                           .find(el => el.textContent === actionName);
+        if (found) {
+            found.classList.add('active');
+            found.scrollIntoView({ block: 'nearest' });
+        }
+    }
 
-mainSel.onchange = () => {
-    loadSub();
-    renderParamTable(schema[mainSel.value] || {}); // remove [subSel.value]
-};
+    currentSelectedAction = actionName;
+    const actionData = schema[actionName] || {};
+    renderParamTable(actionData, {});
+}
 
+function filterActions() {
+    const query = document.getElementById("action-search").value.toLowerCase();
+    document.querySelectorAll('.action-item').forEach(item => {
+        const text = item.textContent.toLowerCase();
+        item.style.display = text.includes(query) ? "block" : "none";
+    });
+}
 
 function loadTests() {
     fetch('/testfile_list')
@@ -134,9 +279,16 @@ function loadTests() {
             });
 
             renderTests('all');
+
+            if (initialTestId) {
+                const targetTest = allTestData.find(t => t.id === initialTestId || t.module === initialTestId);
+                if (targetTest) {
+                    testListSel.value = targetTest.module;
+                    updateFields();
+                }
+            }
         });
 }
-
 
 function renderTests(filter) {
     const testListSel = document.getElementById("testlist");
@@ -146,14 +298,17 @@ function renderTests(filter) {
         ? allTestData 
         : allTestData.filter(t => t.system === filter);
 
+    filtered.sort((a, b) => (a.id || "").localeCompare(b.id || ""));
+
     filtered.forEach(test => {
         const opt = document.createElement("option");
-        opt.value = test.module; 
-        opt.textContent = test.display_name;
+        opt.value = test.module;
+        const typeKeys = Object.keys(test.types || {});
+        const typeString = typeKeys.length > 0 ? " [" + typeKeys.join(", ") + "]" : "";
+        opt.textContent = (test.id || "Unknown") + typeString;
         testListSel.appendChild(opt);
     });
 }
-
 
 function updateFields() {
     const testSlug = document.getElementById("testlist").value;
@@ -174,21 +329,19 @@ function updateFields() {
         });
 }
 
-
 function createStepObject() {
-    const currentAction = mainSel.value;
-    const templateParams = schema[currentAction] || { "string": "" };
-    const finalParams = getParamValuesFromTable();
-
     return {
-        action: currentAction,
-        param: finalParams,
+        action: currentSelectedAction,
+        param: getParamValuesFromTable(),
         subaction: "" 
     };
 }
 
-
 function addStep() {
+    if (!currentSelectedAction) {
+        alert("Select an action first");
+        return;
+    }
     const newStep = createStepObject();
     if (selectedIndex === null) {
         steps.push(newStep);
@@ -198,26 +351,23 @@ function addStep() {
     render();
 }
 
-
 function updateStep() {
     if (selectedIndex === null) return;
     steps[selectedIndex] = createStepObject();
     render();
 }
 
-
 function selectStep(index) {
     selectedIndex = (selectedIndex === index) ? null : index;
     if (selectedIndex !== null) {
         const s = steps[selectedIndex];
-        mainSel.value = s.action;
+        selectAction(s.action);
         renderParamTable(schema[s.action] || {}, s.param);
     } else {
         renderParamTable({}, {});
     }
     render();
 }
-
 
 function renderHighlightedJSON() {
     const outputPre = document.getElementById("output");
@@ -234,8 +384,6 @@ function renderHighlightedJSON() {
                 const isSelected = (parentKey === "steps" && i === selectedIndex);
                 const valStr = renderValue(v, parentKey, i, depth + 1);
                 const comma = (i === value.length - 1) ? "" : ",";
-                
-                // If selected comma stays outside span
                 if (isSelected) {
                     return `<span class="json-highlight">${valStr}</span>${comma}`;
                 }
@@ -259,7 +407,6 @@ function renderHighlightedJSON() {
     outputPre.innerHTML = renderValue(jsonObj, null, null, 0);
 }
 
-
 function moveStep() {
     if (selectedIndex === null || steps.length < 2) return;
     const targetIdx = parseInt(moveTarget.value);
@@ -273,7 +420,6 @@ function moveStep() {
     render();
 }
 
-
 function render() {
     const stepsDiv = document.getElementById("steps");
     stepsDiv.innerHTML = "";
@@ -282,15 +428,12 @@ function render() {
     steps.forEach((s, i) => {
         const d = document.createElement("div");
         d.className = "step" + (i === selectedIndex ? " selected" : "");
-        
         const dot = document.createElement("div");
         dot.className = "dot";
         d.appendChild(dot);
-
         const text = document.createElement("span");
-        text.textContent = `Step ${i + 1}: ${s.action} / ${s.subaction}`;
+        text.textContent = `Step ${i + 1}: ${s.action}`;
         d.appendChild(text);
-
         const delBtn = document.createElement("button");
         delBtn.textContent = "✖";
         delBtn.style.cssText = "margin-left: 10px; color: white; background: red; border: none; border-radius: 3px; width: 20px; height: 20px; font-size: 12px; cursor: pointer;";
@@ -325,28 +468,22 @@ function render() {
         moveTarget.value = selectedIndex; 
     }
 
-    const currentTestModule = document.getElementById("testlist").value;
     renderHighlightedJSON();
 }
 
-
 function sendSteps() {
-    const testListSel = document.getElementById("testlist");
     const selectedModule = testListSel.value;
     const selectedText = testListSel.options[testListSel.selectedIndex]?.text;
-
     if (!selectedModule) {
         alert("Please select a Source Test first.");
         return;
     }
-
     const payload = {
         testid: selectedModule,
         testname: selectedText,
         testtype: "dispatchtest",
         steps: steps
     };
-
     fetch("/testbuilder", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
@@ -363,30 +500,30 @@ function sendSteps() {
     .catch(err => alert("Failed to sync: " + err));
 }
 
-
 function renderParamTable(templateParams, currentValues={}) {
     const tbody = document.querySelector("#param-table tbody");
     tbody.innerHTML = "";
-    
     Object.keys(templateParams).forEach(key => {
         const tr = document.createElement("tr");
-        
         const tdKey = document.createElement("td");
-        tdKey.textContent = key;
+        const inputId = `param_input_${key}`;
+        const label = document.createElement("label");
+        label.htmlFor = inputId;
+        label.textContent = key;
+        tdKey.appendChild(label);
         tr.appendChild(tdKey);
-
         const tdVal = document.createElement("td");
         const input = document.createElement("input");
         input.type = "text";
+        input.id = inputId;
+        input.name = key;
         input.value = (currentValues[key] !== undefined) ? currentValues[key] : templateParams[key];
         input.dataset.paramKey = key;
         tdVal.appendChild(input);
         tr.appendChild(tdVal);
-
         tbody.appendChild(tr);
     });
 }
-
 
 function getParamValuesFromTable() {
     const values = {};
@@ -396,10 +533,9 @@ function getParamValuesFromTable() {
     return values;
 }
 
-
 loadTests();
+buildActionList();
 render();
-
-
 </script>
+
 {% endblock %}

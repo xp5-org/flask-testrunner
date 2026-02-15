@@ -20,7 +20,10 @@
                         <div><strong>Status:</strong> {{ status or 'N/A' }}</div>
                     </div>
                     <button onclick="runTest('{{ internal }}')">Run {{ type }}</button>
-                </div>
+                    <button onclick="window.location.href='/testbuilder/{{ internal }}'" 
+            style="background: #6c757d; color: white; border: none; border-radius: 4px; padding: 5px; cursor: pointer;">Edit</button> 
+            <!-- edit button for test to go to testbuilder is here -->
+</div>
             {% endfor %}
         {% endfor %}
     </div>
