@@ -365,3 +365,5 @@ class ReportDB:
                 results[dict_key]["status"] = "PASS"
 
         return list(results.values())
+
+db = ReportDB()
