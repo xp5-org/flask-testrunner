@@ -57,45 +57,6 @@ def reset_step_counter():
     _step_counter = 0
 
 
-# def init_test_env(config, module_name):
-#     import os
-#     import sys
-    
-#     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-#     if helperdir not in sys.path:
-#         sys.path.insert(0, helperdir)
-#     from apphelpers import register_testfile, reset_step_counter
-
-#     folder = config.get("projdir", config.get("projname", "")).lstrip('/')
-    
-#     paths = {}
-#     paths["projdir"] = os.path.join(config["projbasedir"], folder)
-#     paths["src"] = os.path.join(paths["projdir"], "src")
-#     paths["out"] = os.path.join(paths["projdir"], "output")
-    
-#     paths["d64"] = os.path.join(paths["out"], config["cmainfile"] + ".d64")
-#     paths["vice_cfg"] = os.path.join(config["projbasedir"], config["viceconf"])
-#     if config.get("linkerconf"):
-#         paths["linker"] = os.path.join(paths["projdir"], config["linkerconf"])
-#     else:
-#         # look for [folder]_linker.cfg inside the project directory
-#         paths["linker"] = os.path.join(paths["projdir"], folder + "_linker.cfg")
-        
-#     paths["cmain_abs"] = os.path.join(paths["src"], config["cmainfile"] + ".c")
-
-#     register_testfile(
-#         #id=folder,
-#         id=config.get("testname"),
-#         types=[config["testtype"]],
-#         system=config["archtype"].upper(),
-#         platform=config["platform"],
-#     )(sys.modules[module_name])
-    # reset_step_counter()
-    # return paths
-
-
-
 def build_paths(tree, base_path, config, result=None):
     if result is None:
         result = {}
@@ -119,6 +80,7 @@ def build_paths(tree, base_path, config, result=None):
             result[key] = os.path.join(current_full_path, formatted_val)
 
     return result
+
 
 def init_test_env(config, module_name):
     parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
