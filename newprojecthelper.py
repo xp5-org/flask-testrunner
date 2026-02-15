@@ -1,7 +1,7 @@
-import os, shutil
+import os
+import shutil
 import re
 import importlib
-import os
 
 #######################################
 ### config stuff #####################
@@ -24,9 +24,8 @@ def newprojdir(outputname):
     return full_path
 
 
-def copybuildtest(src_dir, outputname, testlist_name=None, dest_dir=None,
-                  cmainfile=None, testtype=None, archtype=None,
-                  platform=None, viceconf=None, linkerconf=None):
+def copybuildtest(src_dir, outputname, testlist_name=None, dest_dir=None, **kwargs):
+    # does way more than copy build test, need to rename or separate out
     import os
     import shutil
 
@@ -38,41 +37,37 @@ def copybuildtest(src_dir, outputname, testlist_name=None, dest_dir=None,
         try:
             platform_index = parts.index("sourcedir") + 1
             platform_name = parts[platform_index]
+            dest_dir = os.path.join("/testsrc/sourcedir", platform_name, outputname)
         except (ValueError, IndexError):
-            raise RuntimeError(f"Cannot determine platform from {src_dir}")
-        dest_dir = os.path.join("/testsrc/sourcedir", platform_name, outputname)
+            dest_dir = os.path.join(src_dir, "..", outputname)
 
-    dest_dir = os.path.abspath(dest_dir)
-    os.makedirs(dest_dir, exist_ok=True)
+    src_dir_abs = os.path.abspath(src_dir)
+    dest_dir_abs = os.path.abspath(dest_dir)
+    final_testlist_name = "{}.py".format(testlist_name) if testlist_name else "__testlist__{}.py".format(outputname)
+    target_testlist_path = os.path.join(dest_dir_abs, final_testlist_name)
 
-    for fname in os.listdir(src_dir):
-        src_path = os.path.join(src_dir, fname)
-        if os.path.isfile(src_path):
-            if fname.startswith("__testlist__"):
-                testlist_file = testlist_name or "__testlist__{}".format(outputname)
-                dst_path = os.path.join(dest_dir, "{}.py".format(testlist_file))
-            else:
-                dst_path = os.path.join(dest_dir, fname)
+    if src_dir_abs != dest_dir_abs:
+        os.makedirs(dest_dir_abs, exist_ok=True)
+        src_code_folder = os.path.join(src_dir_abs, 'src')
+        dst_code_folder = os.path.join(dest_dir_abs, 'src')
+        
+        if os.path.exists(src_code_folder):
+            copy_sourcedir(src_code_folder, dst_code_folder)
 
-            if os.path.abspath(src_path) == os.path.abspath(dst_path):
-                continue
+        source_testlist_path = None
+        for fname in os.listdir(src_dir_abs):
+            if fname.startswith("__testlist__") and fname.endswith(".py"):
+                source_testlist_path = os.path.join(src_dir_abs, fname)
+                break
+        
+        if source_testlist_path:
+            shutil.copy2(source_testlist_path, target_testlist_path)
+            if 'projdir' not in kwargs:
+                kwargs['projdir'] = os.path.basename(dest_dir_abs.rstrip('/'))
+                
+            update_register_metadata(target_testlist_path, **kwargs)
 
-            shutil.copy2(src_path, dst_path)
-
-    testlist_file = testlist_name or "__testlist__{}".format(outputname)
-    update_register_metadata(
-        os.path.join(dest_dir, "{}.py".format(testlist_file)),
-        new_projname=outputname,
-        new_projdirname=os.path.basename(dest_dir.rstrip('/')),
-        new_cmainfile=cmainfile,
-        new_testtype=testtype,
-        new_archtype=archtype,
-        new_platform=platform,
-        new_viceconf=viceconf,
-        new_linkerconf=linkerconf
-    )
-
-    return dest_dir, "{}.py".format(testlist_file)
+    return dest_dir_abs, final_testlist_name
 
 
 def copy_sourcedir(src_path, dst_path):
@@ -81,29 +76,19 @@ def copy_sourcedir(src_path, dst_path):
     shutil.copytree(src_path, dst_path)
 
 
-def update_register_metadata(pyfile_path, new_projname=None, new_projdirname=None, new_cmainfile=None,
-                             new_testtype=None, new_archtype=None, new_platform=None,
-                             new_viceconf=None, new_linkerconf=None):
+def update_register_metadata(pyfile_path, **kwargs):
     with open(pyfile_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    updates = {
-        "testname": new_projname,
-        "projdir": new_projdirname,
-        "cmainfile": new_cmainfile,
-        "testtype": new_testtype,
-        "archtype": new_archtype,
-        "platform": new_platform,
-        "viceconf": new_viceconf,
-        "linkerconf": new_linkerconf,
-    }
-    for key, new_val in updates.items():
+    for key, new_val in kwargs.items():
         if new_val is not None:
-            # regex matches: "key": "value" (with optional whitespace)
-            pattern = rf'("{key}"\s*:\s*)["\'].*?["\']'
+            # match single or double quotes as key. 
+            # parse : separator
+            # replaces 'val' or "val"
+            pattern = rf'([\'"]{key}[\'"]\s*:\s*)([\'"].*?[\'"])'
             replacement = rf'\1"{new_val}"'
+            
             content = re.sub(pattern, replacement, content)
 
     with open(pyfile_path, "w", encoding="utf-8") as f:
         f.write(content)
-

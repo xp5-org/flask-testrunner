@@ -1,0 +1,255 @@
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:31:53] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:31:53] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:31:53] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:31:53] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:31:53] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Using cached dispatch for /testsrc/pyhelpers
+172.17.0.1 - - [15/Feb/2026 18:31:54] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:31:54] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:31:54] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:31:54] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:36:20] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:36:20] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:36:20] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:36:20] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:36:20] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Using cached dispatch for /testsrc/pyhelpers
+172.17.0.1 - - [15/Feb/2026 18:36:21] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:36:21] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:36:21] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:36:21] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:37:20] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:37:20] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:37:20] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:37:20] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:37:20] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:37:21] "GET / HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:37:21] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:37:21] "GET /progress HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:37:21] "GET /testfile_list HTTP/1.1" 200 -
+failed loads:  []
+172.17.0.1 - - [15/Feb/2026 18:37:21] "GET /failed_tests HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:38:18] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:38:18] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:38:18] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:38:18] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:38:18] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:38:19] "GET / HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:38:19] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:38:19] "GET /progress HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:38:19] "GET /testfile_list HTTP/1.1" 200 -
+failed loads:  []
+172.17.0.1 - - [15/Feb/2026 18:38:19] "GET /failed_tests HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:42:58] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:42:58] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:42:59] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:42:59] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:42:59] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:43:00] "GET / HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:43:00] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:43:00] "GET /progress HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:43:00] "GET /testfile_list HTTP/1.1" 200 -
+failed loads:  []
+172.17.0.1 - - [15/Feb/2026 18:43:00] "GET /failed_tests HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:44:56] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:44:56] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:44:56] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:44:56] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:44:56] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:44:57] "GET / HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:44:57] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:44:57] "GET /progress HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:44:58] "GET /testfile_list HTTP/1.1" 200 -
+failed loads:  []
+172.17.0.1 - - [15/Feb/2026 18:44:58] "GET /failed_tests HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:45:43] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:45:43] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:45:43] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:45:43] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:45:43] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:45:44] "GET / HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:45:44] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:45:44] "GET /progress HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:45:44] "GET /testfile_list HTTP/1.1" 200 -
+failed loads:  []
+172.17.0.1 - - [15/Feb/2026 18:45:44] "GET /failed_tests HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:46:20] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:20] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:20] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:20] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:20] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:21] "GET / HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:21] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:46:22] "GET /progress HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:22] "GET /testfile_list HTTP/1.1" 200 -
+failed loads:  []
+172.17.0.1 - - [15/Feb/2026 18:46:22] "GET /failed_tests HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:46:59] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:59] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:59] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:59] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:46:59] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:00] "GET / HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:01] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:47:01] "GET /progress HTTP/1.1" 200 -
+failed loads:  []
+172.17.0.1 - - [15/Feb/2026 18:47:01] "GET /failed_tests HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:01] "GET /testfile_list HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:47:22] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:22] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:22] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:22] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:22] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:23] "GET / HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:23] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:47:24] "GET /progress HTTP/1.1" 200 -
+failed loads:  []
+172.17.0.1 - - [15/Feb/2026 18:47:24] "GET /failed_tests HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:24] "GET /testfile_list HTTP/1.1" 200 -
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.17.0.3:8080
+[33mPress CTRL+C to quit[0m
+
+[DEBUG] Attempting to load dispatch from: /testsrc/pyhelpers
+[DEBUG] Looking for helper file: /testsrc/pyhelpers/dispatch_functions.py
+[DEBUG] Successfully imported module: project_helpers_pyhelpers
+[DEBUG] Functions found in dispatch_functions.py: ['assemble_ca65', 'assemble_object', 'compile_cc65', 'create_blank_d64', 'dispatchtest_step', 'format_and_copyd64', 'launch_vice_instance', 'link_ld65', 'next_vice_instance', 'send_vice_command', 'test_basic_sendlistdisk', 'test_compiletheprogram', 'test_emulator_start', 'test_sendastring', 'test_sendrun', 'test_terminate_all', 'test_wordsearch']
+172.17.0.1 - - [15/Feb/2026 18:47:38] "GET /testbuilder/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:38] "GET /static/style.css HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:38] "GET /favicon.ico HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:39] "GET /testfile_list HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:39] "GET /api/teststeps/c128src.textprint40col.__testlist__c128_40coltext HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:40] "GET / HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:40] "[36mGET /static/style.css HTTP/1.1[0m" 304 -
+172.17.0.1 - - [15/Feb/2026 18:47:40] "GET /progress HTTP/1.1" 200 -
+failed loads:  []
+172.17.0.1 - - [15/Feb/2026 18:47:40] "GET /failed_tests HTTP/1.1" 200 -
+172.17.0.1 - - [15/Feb/2026 18:47:40] "GET /testfile_list HTTP/1.1" 200 -

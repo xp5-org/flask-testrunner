@@ -3,3 +3,4 @@
 report.sqlite
 .coverage
 /pycache
+apptestlog.txt

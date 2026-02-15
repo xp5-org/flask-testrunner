@@ -16,7 +16,7 @@ h2, h3 {
 /* Unified Table Logic */
 table {
     width: 100%;
-    table-layout: fixed; /* Prevents columns from resizing based on text length */
+    /* table-layout: fixed; */
     border-collapse: collapse;
     margin-bottom: 20px;
     background: #fff;
@@ -38,13 +38,13 @@ th, td {
     border: 1px solid #eee;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    /* white-space: nowrap; */
 }
 
 /* STRICT COLUMN WIDTHS (Matches every table on the page) */
 th:nth-child(1), td:nth-child(1) { width: 40%; } /* ID / Report Name */
 th:nth-child(2), td:nth-child(2) { width: 15%; } /* System / Duration */
-th:nth-child(3), td:nth-child(3) { width: 30%; } /* Run Buttons / Timestamp */
+th:nth-child(3), td:nth-child(3) { width: auto; } /* Run Buttons / Timestamp */
 th:nth-child(4), td:nth-child(4) { width: 15%; } /* Status / Empty Space */
 
 /* Status Styling */

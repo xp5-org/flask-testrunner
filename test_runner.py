@@ -11,7 +11,7 @@ import importlib
 from collections import defaultdict
 
 from appstate import progress_state
-from app import db
+from dbhelper import db
 import apphelpers
 import dispatchhelper
 
@@ -123,6 +123,8 @@ def run_registered_test(name, registry, context):
                 start_time = time.time()
                 result = test_func(context)
                 duration = time.time() - start_time
+                log_output = ""
+                stdout_output = ""
                 
                 if isinstance(result, tuple):
                     success = result[0]

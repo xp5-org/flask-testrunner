@@ -9,10 +9,39 @@
     /* Control height via padding */
     #most-recent-table td, 
     #summaries-table td, 
-    .test-table td {
-        padding: 2px 12px; 
-        line-height: 1;
-    }
+.test-table {
+    width: 100%;
+    table-layout: auto;
+}
+
+/* tiling the run buttons */
+td button {
+    margin: 2px;
+}
+
+td:last-child {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+
+.buttons-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    width: 100%;
+}
+
+.buttons-cell button {
+    flex: 0 1 auto;      /* don’t grow, shrink if needed */
+    min-width: 20px;     /* don’t shrink below this */
+    max-width: 200px;    /* optional, prevents super wide buttons */
+    margin: 2px;
+}
+
+
+
 
 </style>
 
@@ -178,31 +207,41 @@ document.addEventListener("DOMContentLoaded", async () => {
             grouped[key].push(test);
         });
 
-        Object.values(grouped).forEach(group => {
-            const test = group[0];
-            const buttons = group.map(t =>
-                Object.entries(t.types || {}).map(([type, file]) =>
-                    `<button onclick="startTest('${t.module}', '${t.display_name}', '${type}')">${type}</button>`
-                ).join("")
-            ).join("");
+Object.values(grouped).forEach(group => {
+    const test = group[0];
+    const buttons = group.map(t =>
+        Object.entries(t.types || {}).map(([type, file]) =>
+            `<button onclick="startTest('${t.module}', '${t.display_name}', '${type}')">${type}</button>`
+        ).join("")
+    ).join("");
 
-            html += `<tr>
-                        <td><span class="test-link" data-testid="${test.id}">${test.display_name}</span></td>
-                        <td class="system-col">${test.system}</td>
-                        <td>${buttons}</td>
-                     </tr>`;
-        });
+    html += `<tr>
+                <td><span class="test-link" data-testid="${test.id}">${test.display_name}</span></td>
+                <td class="buttons-col">${test.system}</td>
+                <td class="buttons-cell">${buttons}</td>
+             </tr>`;
+});
+
 
         html += `</table></div>`;
         container.insertAdjacentHTML("beforeend", html);
     }
 
-    const updateStriping = (rows) => {
-        const visibleRows = rows.filter(r => r.style.display !== "none");
-        visibleRows.forEach((row, i) => {
-            row.style.backgroundColor = (i % 2 === 0) ? bgcolor1 : bgcolor2;
+const updateStriping = (rows) => {
+    const visibleRows = rows.filter(r => r.style.display !== "none");
+    visibleRows.forEach((row, i) => {
+        const rowColor = (i % 2 === 0) ? bgcolor1 : bgcolor2;
+        row.style.backgroundColor = rowColor;
+
+        // Alternate button colors to match row striping
+        const buttons = row.querySelectorAll(".buttons-cell button");
+        buttons.forEach((btn, j) => {
+            btn.style.backgroundColor = (i % 2 === 0) ? "#007bff" : "#3399ff";
+            btn.style.color = "white";
         });
-    };
+    });
+};
+
 
     document.querySelectorAll(".platform-section").forEach(section => {
         const rows = Array.from(section.querySelectorAll("tr")).slice(1);
@@ -228,7 +267,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             let hasVisible = false;
 
             rows.forEach(row => {
-                const sysCol = row.querySelector(".system-col");
+                const sysCol = row.querySelector(".buttons-col");
                 const sys = sysCol ? sysCol.textContent : "";
                 if (value === "all" || sys === value) {
                     row.style.display = "";

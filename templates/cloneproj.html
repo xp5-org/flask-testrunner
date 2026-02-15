@@ -2,15 +2,14 @@
 
 {% block content %}
 
-
     <style>
         .spreadsheet { display: table; width: 100%; border-collapse: collapse; }
         .row { display: table-row; border-bottom: 1px solid #eee; }
         .cell { display: table-cell; padding: 6px; vertical-align: middle; }
         .label-cell { width: 30%; font-weight: bold; color: #444; font-size: 0.85em; background: #fafafa; border-right: 1px solid #eee; }
         
-        select, input { width: 100%; padding: 4px 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 3px; font-size: 0.9em; }
-        input[readonly] { background-color: #f9f9f9; color: #777; border-color: #ddd; font-family: monospace; font-size: 0.8em; }
+        select, input, textarea { width: 100%; padding: 4px 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 3px; font-size: 0.9em; }
+        input[readonly], textarea[readonly] { background-color: #f9f9f9; color: #777; border-color: #ddd; font-family: monospace; font-size: 0.8em; }
         
         .section-head { background: #e9ecef; font-weight: bold; font-size: 0.8em; text-transform: uppercase; letter-spacing: 1px; }
         
@@ -18,27 +17,24 @@
         button:hover { background: #0056b3; }
         
         #status { margin-top: 10px; padding: 8px; border-radius: 4px; font-size: 0.85em; white-space: pre-wrap; display: none; }
-        .input-group { display: flex; align-items: center; }
-        .prefix { background: #eee; padding: 4px 8px; border: 1px solid #ccc; border-right: none; border-radius: 3px 0 0 3px; font-size: 0.8em; color: #666; }
-        .prefixed-input { border-radius: 0 3px 3px 0; }
+        
+        /* JSON display styling */
+        .json-display { height: 300px; white-space: pre; overflow-x: auto; }
     </style>
-
-
 
     <div id="main-content">
         <h2>Clone Build Test</h2>
 
         <div class="spreadsheet">
+            <div class="row section-head"><div class="cell" colspan="2">1. Source Selection</div></div>
+            
             <div class="row">
                 <div class="cell label-cell">System Filter</div>
                 <div class="cell"><select id="system-filter"><option value="all">All Systems</option></select></div>
             </div>
-
-            <div class="row section-head"><div class="cell" colspan="2">1. Source Selection</div></div>
-            
             <div class="row">
                 <div class="cell label-cell">Source Test</div>
-                <div class="cell"><select id="testlist" onchange="updateFields()"></select></div>
+                <div class="cell"><select id="sourcetestlist" onchange="updateFields()"></select></div>
             </div>
             <div class="row">
                 <div class="cell label-cell">Source Path</div>
@@ -48,47 +44,28 @@
             <div class="row section-head"><div class="cell" colspan="2">2. Target Definition</div></div>
 
             <div class="row">
-                <div class="cell label-cell">New project dir</div>
-                <div class="cell"><input type="text" id="target_id" placeholder="Folder/Project Name"></div>
+                <div class="cell label-cell">New Project ID/Dir</div>
+                <div class="cell"><input type="text" id="target_id" placeholder="New Folder Name"></div>
             </div>
             <div class="row">
-                <div class="cell label-cell">Run button label</div>
+                <div class="cell label-cell">Target Type</div>
                 <div class="cell"><input type="text" id="target_type"></div>
             </div>
             <div class="row">
-                <div class="cell label-cell">New Dir Path</div>
+                <div class="cell label-cell">Full Target Path</div>
                 <div class="cell"><input type="text" id="target_path"></div>
             </div>
 
-            <div class="row section-head"><div class="cell" colspan="2">3. Configuration Settings</div></div>
+            <div class="row section-head"><div class="cell" colspan="2">3. Config Parameters</div></div>
+            
+            <div id="dynamic-config-container">
+                <div class="row"><div class="cell" colspan="2" style="text-align:center; color:#999;">Select a source test to load config</div></div>
+            </div>
 
+            <div class="row section-head"><div class="cell" colspan="2">4. Structure & Steps (Reference)</div></div>
             <div class="row">
-                <div class="cell label-cell">Main C File</div>
-                <div class="cell"><input type="text" id="cfg_cmainfile"></div>
-            </div>
-            <div class="row">
-                <div class="cell label-cell">Arch Type</div>
-                <div class="cell"><input type="text" id="cfg_archtype"></div>
-            </div>
-            <div class="row">
-                <div class="cell label-cell">Platform</div>
-                <div class="cell"><input type="text" id="cfg_platform"></div>
-            </div>
-            <div class="row">
-                <div class="cell label-cell">VICE Config</div>
-                <div class="cell"><input type="text" id="cfg_viceconf"></div>
-            </div>
-            <div class="row">
-                <div class="cell label-cell">Linker Config</div>
-                <div class="cell"><input type="text" id="cfg_linkerconf"></div>
-            </div>
-            <div class="row">
-                <div class="cell label-cell">Testfile Name (primary sort key)</div>
-                <div class="cell">
-                    <div class="input-group">
-                        <span class="prefix">__testfile__</span>
-                        <input type="text" id="cfg_testfile" class="prefixed-input">
-                    </div>
+                <div class="cell" colspan="2">
+                    <textarea id="structure-display" class="json-display" readonly></textarea>
                 </div>
             </div>
         </div>
@@ -99,7 +76,7 @@
 
     <script>
 let allTestData = [];
-let currentProjBase = ""; // Global to store the base directory
+let currentRawConfig = {}; // Stores the raw config object
 
 function loadTests() {
     fetch('/testfile_list')
@@ -119,7 +96,7 @@ function loadTests() {
 }
 
 function renderTests(filter) {
-    const sel = document.getElementById('testlist');
+    const sel = document.getElementById('sourcetestlist');
     sel.innerHTML = '<option value="">-- Select Source Test --</option>';
     let filtered = filter === 'all' ? allTestData : allTestData.filter(item => item.system === filter);
     filtered.sort((a, b) => (a.id || "").localeCompare(b.id || ""));
@@ -136,86 +113,155 @@ function renderTests(filter) {
 document.getElementById('system-filter').addEventListener('change', function() { renderTests(this.value); });
 
 function updateFields() {
-    const sel = document.getElementById('testlist');
+    const sel = document.getElementById('sourcetestlist');
     const selected = sel.options[sel.selectedIndex];
     if (!selected.value) return;
 
+    // Set Base Target Info
     document.getElementById('target_type').value = selected.dataset.primaryType;
-    if (!document.getElementById('cfg_testfile').dataset.userEdited) {
-        document.getElementById('cfg_testfile').value = selected.dataset.id;
-    }
+    const newId = selected.dataset.id + '_copy';
+    document.getElementById('target_id').value = newId;
 
     fetch(`/module_path?src_module=${encodeURIComponent(selected.value)}`)
         .then(r => r.json())
         .then(res => {
             if (res.status === 'success' && res.config) {
-                const cfg = res.config;
-                const paths = cfg.paths || {};
-                
-                document.getElementById('src_path_display').value = paths.src || '';
+                // Populate Static Source Info
+                const paths = res.config.paths || {}; // Handle if paths are inside or part of config
+                document.getElementById('src_path_display').value = paths.src || res.config.projbasedir || '';
 
-                // Store projbasedir and setup Target ID
-                currentProjBase = cfg.projbasedir || '';
-                const targetIdValue = selected.dataset.id + '_copy';
-                document.getElementById('target_id').value = targetIdValue;
-                
-                // Set initial Target Path
-                document.getElementById('target_path').value = currentProjBase + targetIdValue + '/';
-
-                loadConfigFields({
-                    cmainfile: cfg.cmainfile || '',
-                    archtype: cfg.archtype || '',
-                    platform: cfg.platform || '',
-                    viceconf: paths.viceconf || '',
-                    linkerconf: cfg.linkerconf || ''
-                });
+                buildConfigEditor(res.config);
+                updateTargetPath();
             }
         });
 }
 
-document.getElementById('cfg_testfile').addEventListener('input', function() { this.dataset.userEdited = true; });
+/**
+ * Iterates over the config object.
+ * Scalar values -> Editable Input Rows.
+ * Structure/Steps -> Read-only JSON block.
+ */
+function buildConfigEditor(config) {
+    currentRawConfig = config;
+    const container = document.getElementById('dynamic-config-container');
+    container.innerHTML = ''; // Clear previous
 
-// Updated listener to use currentProjBase
-document.getElementById('target_id').addEventListener('input', function() {
-    const name = this.value.trim();
-    if (currentProjBase && name) {
-        document.getElementById('target_path').value = currentProjBase + name + '/';
+    const structureObj = {};
+    
+    // Sort keys to keep UI consistent
+    const keys = Object.keys(config).sort();
+
+    keys.forEach(key => {
+        const val = config[key];
+
+        // 1. Filter Complex Objects to JSON view
+        if (key === 'structure' || key === 'steps' || key === 'paths') {
+            structureObj[key] = val;
+            return; 
+        }
+
+        // 2. Filter internal keys (optional)
+        if (key.startsWith('_')) return;
+
+        // 3. Create Editable Row
+        const row = document.createElement('div');
+        row.className = 'row';
+
+        const label = document.createElement('div');
+        label.className = 'cell label-cell';
+        label.textContent = key;
+
+        const valCell = document.createElement('div');
+        valCell.className = 'cell';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'dynamic-conf-input'; // Marker class for collection
+        input.dataset.key = key; // Store the key name
+        
+        // Handle value types for display
+        if (typeof val === 'object' && val !== null) {
+            input.value = JSON.stringify(val);
+        } else {
+            input.value = val === undefined ? '' : val;
+        }
+
+        // Special listener: if user changes projbasedir, update target path
+        if (key === 'projbasedir') {
+            input.id = 'dynamic_projbasedir';
+            input.addEventListener('input', updateTargetPath);
+        }
+
+        // Special listener: if user changes projdir, sync it with target_id? 
+        // (Optional: depending on logic, usually target_id overrides projdir)
+        
+        valCell.appendChild(input);
+        row.appendChild(label);
+        row.appendChild(valCell);
+        container.appendChild(row);
+    });
+
+    // Populate the Structure/Steps display
+    document.getElementById('structure-display').value = JSON.stringify(structureObj, null, 4);
+}
+
+// Updates the Full Target Path based on the (potentially edited) Base Dir + Target ID
+function updateTargetPath() {
+    const baseDirInput = document.getElementById('dynamic_projbasedir');
+    // Fallback to current config if input doesn't exist yet
+    let base = baseDirInput ? baseDirInput.value : (currentRawConfig.projbasedir || '');
+    
+    const name = document.getElementById('target_id').value.trim();
+    
+    // Ensure trailing slash on base
+    if (base && !base.endsWith('/') && !base.endsWith('\\')) {
+        base += '/';
     }
-});
+
+    document.getElementById('target_path').value = base + name + '/';
+}
+
+document.getElementById('target_id').addEventListener('input', updateTargetPath);
 
 function cloneProject() {
     const status = document.getElementById('status');
     status.style.display = 'block';
-    status.textContent = 'Initialising...';
-    
+    status.textContent = 'Packaging configuration...';
+
+    // 1. Gather Standard Meta Params
     const payload = {
-        src_module: document.getElementById('testlist').value,
+        src_module: document.getElementById('sourcetestlist').value,
         target_id: document.getElementById('target_id').value.trim(),
         target_type: document.getElementById('target_type').value.trim(),
         target_path: document.getElementById('target_path').value.trim(),
-        cmainfile: document.getElementById('cfg_cmainfile').value.trim(),
-        archtype: document.getElementById('cfg_archtype').value.trim(),
-        platform: document.getElementById('cfg_platform').value.trim(),
-        viceconf: document.getElementById('cfg_viceconf').value.trim(),
-        linkerconf: document.getElementById('cfg_linkerconf').value.trim(),
-        testfile_name: document.getElementById('cfg_testfile').value.trim()
     };
 
-    fetch(`/clone_as_new?${new URLSearchParams(payload)}`)
+    // 2. Gather Dynamic Config Params
+    const inputs = document.querySelectorAll('.dynamic-conf-input');
+    inputs.forEach(inp => {
+        let val = inp.value;
+        // Attempt to restore numbers/booleans if needed, or send as strings
+        // Here we send as strings, backend should cast if necessary, 
+        // OR we can try parsing JSON if it looks like an array/obj
+        payload[inp.dataset.key] = val;
+    });
+
+    // 3. Send Request
+    // Note: We are sending a flattened object. 
+    // The backend should reconstruct the config dict from these keys.
+    const queryString = new URLSearchParams(payload).toString();
+
+    fetch(`/clone_as_new?${queryString}`)
         .then(r => r.json())
         .then(res => {
             status.textContent = res.status === 'success' ? 'Success! Path: ' + res.path : 'Error: ' + res.message;
             status.style.background = res.status === 'success' ? '#f0fff0' : '#fff0f0';
             status.style.color = res.status === 'success' ? 'green' : 'red';
+        })
+        .catch(err => {
+            status.textContent = 'Network Error: ' + err;
+            status.style.color = 'red';
         });
-}
-
-function loadConfigFields(cfg) {
-    document.getElementById('cfg_cmainfile').value = cfg.cmainfile || '';
-    document.getElementById('cfg_archtype').value = cfg.archtype || '';
-    document.getElementById('cfg_platform').value = cfg.platform || '';
-    document.getElementById('cfg_viceconf').value = cfg.viceconf || '';
-    document.getElementById('cfg_linkerconf').value = cfg.linkerconf || '';
 }
 
 loadTests();
