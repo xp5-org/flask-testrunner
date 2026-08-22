@@ -9,11 +9,13 @@ import datetime
 import glob
 import importlib
 from collections import defaultdict
-
+import reporthelper
+import appstate
 from appstate import progress_state
 from dbhelper import db
 import apphelpers
 import dispatchhelper
+import testid
 
 TESTSRC_HELPERDIR = "/testsrc/helpers"
 TESTSRC_BASEDIR = "/testsrc/"
@@ -77,6 +79,38 @@ def load_testfile_from_path(fpath):
         if modname in sys.modules:
             del sys.modules[modname]
         return None
+
+
+def load_config_from_path(fpath):
+    """Exec a testlist file in isolation and return its CONFIG dict (or None).
+
+    For a testlist whose CONFIG is computed rather than a pure literal, this is
+    the only way to see the real steps -- static parsing cannot run the helper
+    that builds them. Executing calls init_test_env, which registers the module
+    under whatever __name__ it is given, so the registry is snapshotted and
+    restored to keep a throwaway entry out of the test list.
+    """
+    if not fpath or not os.path.exists(fpath):
+        return None
+
+    modname = "_configprobe_%s" % abs(hash(fpath))
+    saved_registry = dict(apphelpers.testfile_registry)
+    try:
+        spec = importlib.util.spec_from_file_location(modname, fpath)
+        if not (spec and spec.loader):
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[modname] = mod
+        spec.loader.exec_module(mod)
+        cfg = getattr(mod, "CONFIG", None)
+        return cfg if isinstance(cfg, dict) else None
+    except Exception as e:
+        print(f"[load_config_from_path] load error for {fpath}: {e}")
+        return None
+    finally:
+        sys.modules.pop(modname, None)
+        apphelpers.testfile_registry.clear()
+        apphelpers.testfile_registry.update(saved_registry)
 
 
 def reload_tests():
@@ -162,7 +196,12 @@ def run_testfile(module_name, state=None):
     
     all_tests = []
     test_descriptions = []
-    context = {"sock": None, "abort": False}
+    context = {"sock": None, "abort": False, "abort_sticky": False}
+    # Publish the context so /api/v1/instances can reach the live emulator
+    # objects the steps put in it. Deliberately NOT cleared when the run ends:
+    # a test commonly leaves its VM up on purpose, and that instance stays
+    # viewable until the next run replaces the context.
+    appstate.live_context.publish(context, module_name)
 
     meta = apphelpers.testfile_registry.get(module_name)
     if not meta:
@@ -187,12 +226,9 @@ def run_testfile(module_name, state=None):
             for i, step in enumerate(config["steps"], 1):
                 action = step.get('action', 'unknown')
                 subaction = step.get('subaction', 'unknown')
-                #func_name = f"{action}_{subaction}"
                 func_name = f"{action}"
                 func = dispatch.get(func_name)
                 
-                # create a unique name with stepnum appended , temp fix
-                # list steps names must be unique or will get errors like test with 4 steps but only 3 run
                 unique_name = f"{i}_{func_name}"
                 
                 if func:
@@ -210,9 +246,10 @@ def run_testfile(module_name, state=None):
                                 f"{type(e).__name__}: {str(e)}"
                             )
 
-                    
                     step_wrapper.test_description = unique_name
                     step_wrapper.my_test_type = config.get("testtype", "dispatchtest")
+                    step_wrapper.pause_on = _pause_flag(step.get("pause_on", False))
+                    step_wrapper.action = action
                     
                     all_tests.append(step_wrapper)
                     test_descriptions.append(step_wrapper.test_description)
@@ -253,6 +290,20 @@ def run_testfile(module_name, state=None):
     print(f"Found {len(all_tests)} tests to run for {module_name}.")
     results = run_tests(test_descriptions, all_tests, context, module_name)
 
+    # A GIF recorder started by test_start_gif_capture normally stops itself
+    # when the next step begins, but one started by the LAST step is still
+    # running here. Close it before the report is built, or its .gif lands in
+    # reports/ after _move_assets has already swept the directory and never
+    # gets attached. Objects are duck-typed off the context so this stays
+    # independent of the project's dispatch_functions module.
+    for recorder in (context.get("_gif_recorders") or []):
+        try:
+            if recorder.running:
+                ok, msg = recorder.stop(reason="testlist ended")
+                print(f"[gifcapture] {msg}")
+        except Exception as e:
+            print(f"[gifcapture] failed to stop recorder: {type(e).__name__}: {e}")
+
     def get_start(name):
         ts = TestrunnerTimer.get_start(name)
         return ts if ts is not None else time.time()
@@ -269,8 +320,17 @@ def run_testfile(module_name, state=None):
     subdir_path = os.path.join(REPORT_DIR, timestamp)
     os.makedirs(subdir_path, exist_ok=True)
 
-    report_path = os.path.join(subdir_path, f"{module_name}.html")
-    generate_report(results, report_path, testlist_name=module_name)
+    # Name the report by the same slug the URLs use, so a report on disk and the
+    # id in /test/<id> are the one identifier rather than two spellings of it.
+    slug = testid.slug_for(module_name, apphelpers.testfile_registry.keys())
+    report_path = os.path.join(subdir_path, f"{slug}.html")
+    reporthelper.generate_report(
+        results=results,
+        report_path=report_path,
+        report_dir=REPORT_DIR,
+        compile_logs_dir=compile_logs_dir,
+        testlist_name=module_name,
+    )
 
     raw_types = meta.get("types", {})
     if isinstance(raw_types, dict):
@@ -298,6 +358,73 @@ def run_testfile(module_name, state=None):
         state.test_name = ""
 
     return results
+
+
+def _pause_flag(v):
+    """Coerce a step's pause_on value -- may be a real bool from the testbuilder
+    checkbox, or a string if the .py file was hand-edited."""
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _live_emu_instances(context):
+    """Every context value that looks like a running emulator instance --
+    QEMU/DOSBox-X/86Box/Basilisk/SIMH all keep a subprocess in .process, so
+    duck-type on that rather than importing every backend's class here."""
+    live = []
+    for key, val in (context or {}).items():
+        proc = getattr(val, "process", None)
+        if proc is not None and proc.poll() is None:
+            live.append(val)
+    return live
+
+
+def _run_pause_step(test_name, context):
+    """A step with pause_on=True: hand control to the user instead of running
+    the step's own action. Blocks until every emulator instance launched so
+    far exits (the user closing the window), then marks this step AND every
+    step after it SKIPPED -- not FAIL, since nothing here was ever asserted
+    against automatically; a human looked at it instead. Continuing the
+    automated steps past this point wouldn't make sense anyway once the
+    instance the user was just driving by hand is gone.
+    """
+    start = time.time()
+    instances = _live_emu_instances(context)
+
+    if not instances:
+        msg = "pause_on step reached with no running instance to wait for -- skipping"
+        print(f"[pause] {msg}")
+        context["abort"] = True
+        context["abort_sticky"] = True
+        return (test_name, "SKIPPED", "gray", msg, "", time.time() - start)
+
+    names = ", ".join(getattr(i, "name", "instance") for i in instances)
+    print(f"[pause] waiting for you to close: {names}")
+    progress_state.step_name = f"PAUSED -- close {names} to continue"
+
+    heartbeat = time.time()
+    while any(getattr(i, "process", None) and i.process.poll() is None for i in instances):
+        time.sleep(1)
+        if time.time() - heartbeat > 30:
+            print(f"[pause] still waiting on: {names}")
+            heartbeat = time.time()
+
+    duration = time.time() - start
+    msg = f"paused for manual review ({duration:.1f}s) -- resumed after {names} closed"
+    print(f"[pause] {msg}")
+    # The rest of the run assumed a live instance that's now gone -- same
+    # "nothing after this can run for real" signal every other abort uses.
+    # abort_sticky marks this as a *manual* abort: the user took control on
+    # purpose, so unlike an automatic failure (e.g. an OCR failphrase hit),
+    # the teardown step below should NOT auto-run and yank away an instance
+    # they may still be looking at.
+    context["abort"] = True
+    context["abort_sticky"] = True
+    return (test_name, "SKIPPED", "gray", msg, "", duration)
+
+
+TEARDOWN_ACTION = "test_terminate_all"
 
 
 def run_tests(test_descriptions, registry, context, module_name):
@@ -331,7 +458,24 @@ def run_tests(test_descriptions, registry, context, module_name):
         progress_state.testtype = progress_state.testtype or getattr(test_func, "testtype", "")
 
         if context.get("abort"):
+            # Teardown must still run after an automatic abort (e.g. an OCR
+            # failphrase hit) so it doesn't leave an emulator orphaned --
+            # unless the abort came from a manual pause_on step, where the
+            # user deliberately took control and teardown would yank away
+            # the instance they're looking at.
+            if getattr(test_func, "action", None) == TEARDOWN_ACTION and not context.get("abort_sticky"):
+                context["abort"] = False
+                result = run_registered_test(test_name, [test_func], context)
+                context["abort"] = True
+                if result:
+                    results.append(result)
+                continue
+
             results.append((test_name, "SKIPPED", "gray", "Skipped", "", 0.00))
+            continue
+
+        if getattr(test_func, "pause_on", False):
+            results.append(_run_pause_step(test_name, context))
             continue
 
         result = run_registered_test(test_name, [test_func], context)
@@ -347,120 +491,3 @@ def run_tests(test_descriptions, registry, context, module_name):
     progress_state.testtype = ""
     progress_state.testid = ""
     return results
-
-
-def generate_report(results, report_path, testlist_name=""):
-    subdir_path = os.path.dirname(report_path)
-   # print(f"Creating directory: '{subdir_path}'")
-    if subdir_path and not os.path.exists(subdir_path):
-        os.makedirs(subdir_path, exist_ok=True)
-
-    if os.path.exists(compile_logs_dir):
-        for filename in os.listdir(compile_logs_dir):
-            shutil.move(os.path.join(compile_logs_dir, filename), subdir_path)
-
-    for filename in os.listdir(REPORT_DIR):
-        if (re.match(r"test\d+\.(png|ppm|gif)$", filename) or
-            filename.startswith("screenshot-")):
-            shutil.move(os.path.join(REPORT_DIR, filename), subdir_path)
-
-    screenshot_map = defaultdict(list)
-    for fname in os.listdir(subdir_path):
-        if fname.endswith((".png", ".gif")):
-            # Match filenames like screenshot-vice1-6-1.png or screenshot-vice2-6.png
-            m = re.match(r"screenshot-[^-]+-(\d+)(?:-\d+)?\.(png|gif)$", fname)
-            if m:
-                step_num = int(m.group(1))
-                screenshot_map[step_num].append(fname)
-
-    # Write HTML report
-    with open(report_path, "w") as f:
-        f.write(f"""<html>
-        <head>
-        <title>Test Report - {testlist_name}</title>
-        <style>
-        body {{ font-family: sans-serif; }}
-        table {{ border-collapse: collapse; width: 100%; }}
-        th, td {{ border: 1px solid #ccc; padding: 8px; text-align: left; }}
-        .green {{ background-color: #c8f7c5; }}
-        .red {{ background-color: #f7c5c5; }}
-        .gray {{ background-color: #eeeeee; }}
-
-        .flex-container {{
-            display: flex;
-            gap: 20px;
-            flex-wrap: nowrap;
-            max-width: 100%;
-        }}
-
-        .output-column {{
-            flex: 1;
-            min-width: 0;
-            max-width: 50%;
-            overflow: hidden;
-            background-color: #f0f0f0;
-            padding: 10px;
-        }}
-
-        .image-column {{
-            flex: 1;
-            max-width: 50%;
-        }}
-
-        pre {{
-            background-color: #eee;
-            padding: 10px;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
-            max-width: 100%;
-            overflow-x: auto;
-        }}
-        hr {{ margin: 40px 0; }}
-        </style>
-        </head>
-        <body>
-        <h1>Test Report: {testlist_name}</h1>
-        <table>
-        <tr><th>Test Name</th><th>Duration (s)</th><th>Result</th></tr>
-        """)
-
-
-        # Summary table
-        for name, status, color, _, _, duration in results:
-            f.write(f'<tr><td>{name}</td><td>{duration:.2f}</td><td class="{color}">{status}</td></tr>\n')
-
-        f.write("</table><h2>Detailed Output</h2>\n")
-
-        # Detailed sections with screenshots linked by index (starting at 1)
-        for idx, (name, status, color, output, stdout, duration) in enumerate(results, start=1):
-            matching_images = screenshot_map.get(idx, [])
-            if matching_images:
-                img_tags = "\n".join(
-                    f'<img src="{img}" alt="{img}" style="max-width: 100%; border: 1px solid #ccc;">'
-                    for img in matching_images
-                )
-            else:
-                img_tags = "<p>No screenshot available.</p>"
-
-            f.write(f"""<hr>
-    <div class="flex-container">
-    <div class="output-column">
-        <h3>{name}</h3>
-        <p><strong>Duration:</strong> {duration:.2f} seconds</p>
-        <pre>OUTPUT:
-        {output}
-
-    STDOUT:
-    {stdout}</pre>
-        </div>
-        <div class="image-column">
-            <h4>Screenshot</h4>
-            {img_tags}
-        </div>
-        </div>
-        """)
-
-        f.write("</body></html>")
-
-    print(f"Wrote report to {report_path}")

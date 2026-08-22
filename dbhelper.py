@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import hashlib
 from collections import defaultdict
 import re
 
@@ -54,6 +55,21 @@ class ReportDB:
                 start_time REAL,
                 stop_time REAL,
                 screenshot TEXT
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS build_artifact (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_id     INTEGER NOT NULL,
+                test_id       TEXT,
+                artifact_key  TEXT,
+                artifact_path TEXT,
+                artifact_filename TEXT,
+                exists_on_disk INTEGER DEFAULT 0,
+                file_size     INTEGER,
+                md5_hash      TEXT,
+                FOREIGN KEY (report_id) REFERENCES report(id)
             )
         """)
 
@@ -157,34 +173,76 @@ class ReportDB:
 
 
 
-    def get_all_reports_summary(self, test_parent_name=None):
+    def get_max_report_id(self):
         conn = self._connect()
         cur = conn.cursor()
-        
+        cur.execute("SELECT MAX(id) FROM report")
+        row = cur.fetchone()
+        conn.close()
+        return row[0] if row else None
+
+
+    def get_all_reports_summary(self, test_parent_name=None, per_parent_limit=None):
+        """Report-level summaries, newest first.
+
+        per_parent_limit keeps only the N newest reports of each parent testlist,
+        so the front page stays short without dropping whole testlists off it.
+        """
+        conn = self._connect()
+        cur = conn.cursor()
+
         # match fail & error and return fail
         query = """
-            SELECT 
+            SELECT
+                r.id as report_id,
                 r.path,
                 SUM(tr.duration) as total_duration,
-                CASE 
-                    WHEN MIN(tr.status) IN ('FAIL', 'ERROR') THEN 'FAIL' 
-                    ELSE 'PASS' 
+                CASE
+                    WHEN MIN(tr.status) IN ('FAIL', 'ERROR') THEN 'FAIL'
+                    ELSE 'PASS'
                 END as overall_status,
-                MIN(tr.start_time) as report_start
+                MIN(tr.start_time) as report_start,
+                MIN(tr.test_id) as test_id
             FROM report r
             LEFT JOIN test_result tr ON r.id = tr.report_id
         """
-        
+
         params = []
         if test_parent_name:
             query += " WHERE tr.testparentname = ?"
             params.append(test_parent_name)
-            
+
         query += """
             GROUP BY r.id, r.path
-            ORDER BY r.id DESC
         """
-        
+
+        if per_parent_limit is not None:
+            query = """
+                SELECT path, total_duration, overall_status, report_start
+                FROM (
+                    -- test_id  the parent name is a display
+                    -- label that gets renamed ("openwatcom1" -> "OpenWatcom
+                    -- Bartest"), which would split one testlist's history into
+                    -- several partitions and show 3 reports for each of them.
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY test_id ORDER BY report_id DESC
+                    ) as parent_rank
+                    FROM (%s)
+                )
+                WHERE parent_rank <= ?
+            """ % query
+            params.append(per_parent_limit)
+        else:
+            query = """
+                SELECT path, total_duration, overall_status, report_start
+                FROM (%s)
+            """ % query
+
+        # report_id, not report_start: reports with no result rows have a NULL
+        # start_time and SQLite sorts NULLs first on DESC, which would float
+        # empty reports to the top of the page.
+        query += " ORDER BY report_id DESC"
+
         cur.execute(query, params)
         rows = cur.fetchall()
         conn.close()
@@ -227,11 +285,39 @@ class ReportDB:
             )
         """)
 
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS build_artifact (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_id         INTEGER NOT NULL,
+                test_id           TEXT,
+                artifact_key      TEXT,
+                artifact_path     TEXT,
+                artifact_filename TEXT,
+                exists_on_disk    INTEGER DEFAULT 0,
+                file_size         INTEGER,
+                md5_hash          TEXT,
+                FOREIGN KEY (report_id) REFERENCES report(id)
+            )
+        """)
+
+        # get_latest_namedteststatus() runs a correlated MAX(report_id) subquery
+        # per row; without these it full-scans test_result for every row and the
+        # index page's /api/v1/tests call takes ~18s.
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS ix_test_result_parent_types_report
+            ON test_result (testparentname, test_types, report_id)
+        """)
+
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS ix_test_result_report
+            ON test_result (report_id)
+        """)
+
         conn.commit()
         conn.close()
 
 
-    def populate_sqlite(self, test_id, testparentname, test_types, results, html_report_path, total_duration=0.00, get_start=None, get_stop=None):
+    def populate_sqlite(self, test_id, testparentname, test_types, results, html_report_path, total_duration=0.00, get_start=None, get_stop=None, config=None):
         subdir_path = os.path.dirname(html_report_path)
         screenshot_map = defaultdict(list)
         for fname in os.listdir(subdir_path):
@@ -287,6 +373,173 @@ class ReportDB:
 
         conn.commit()
         conn.close()
+
+        # Derive and store build artifacts from CONFIG if provided
+        if config:
+            self.save_build_artifacts(report_id, test_id, config)
+
+
+    # ── Build artifact helpers ────────────────────────────────────────────────
+
+    # Config keys whose resolved values are build output artifacts.
+    # Each entry: (config_key, human label shown in reports)
+    ARTIFACT_KEYS = [
+        ("prg_filepath",    "PRG file"),
+        ("d64_drive8_file", "Disk image (drive 8)"),
+        ("d64_drive9_file", "Disk image (drive 9)"),
+    ]
+
+    @staticmethod
+    def _resolve_config(tmpl: str, config: dict, passes: int = 6) -> str:
+        """Multi-pass {token} resolver — mirrors repair_config._resolve."""
+        s = str(tmpl)
+        for _ in range(passes):
+            prev = s
+            s = re.sub(
+                r"\{([^}]+)\}",
+                lambda m: str(config[m.group(1)]) if m.group(1) in config else m.group(0),
+                s,
+            )
+            if s == prev:
+                break
+        return s
+
+    def extract_build_artifacts(self, config: dict) -> list[dict]:
+        """
+        Resolve build artifact paths from a CONFIG dict.
+
+        Returns a list of dicts:
+            {artifact_key, artifact_path, artifact_filename,
+             exists_on_disk, file_size, md5_hash}
+        """
+        artifacts = []
+        token_re = re.compile(r"\{[^}]+\}")
+
+        for key, label in self.ARTIFACT_KEYS:
+            raw = config.get(key)
+            if not raw or str(raw).strip() in ("", "None", "null"):
+                continue
+
+            resolved = self._resolve_config(str(raw), config)
+
+            # Skip if still has unresolved tokens or isn't an absolute path
+            if token_re.search(resolved) or not resolved.startswith("/"):
+                continue
+
+            exists    = os.path.isfile(resolved)
+            file_size = None
+            md5_hash  = None
+
+            if exists:
+                file_size = os.path.getsize(resolved)
+                try:
+                    h = hashlib.md5()
+                    with open(resolved, "rb") as f:
+                        for chunk in iter(lambda: f.read(65536), b""):
+                            h.update(chunk)
+                    md5_hash = h.hexdigest()
+                except OSError:
+                    pass
+
+            artifacts.append({
+                "artifact_key":      label,
+                "artifact_path":     resolved,
+                "artifact_filename": os.path.basename(resolved),
+                "exists_on_disk":    1 if exists else 0,
+                "file_size":         file_size,
+                "md5_hash":          md5_hash,
+            })
+
+        return artifacts
+
+    def save_build_artifacts(self, report_id: int, test_id: str, config: dict) -> None:
+        """
+        get build artifacts from `CONFIG` and write them to build_artifact.
+        """
+        artifacts = self.extract_build_artifacts(config)
+        if not artifacts:
+            return
+
+        conn = self._connect()
+        cur = conn.cursor()
+
+        # Migrate existing DBs that predate this table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS build_artifact (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_id         INTEGER NOT NULL,
+                test_id           TEXT,
+                artifact_key      TEXT,
+                artifact_path     TEXT,
+                artifact_filename TEXT,
+                exists_on_disk    INTEGER DEFAULT 0,
+                file_size         INTEGER,
+                md5_hash          TEXT,
+                FOREIGN KEY (report_id) REFERENCES report(id)
+            )
+        """)
+        # Add new columns to pre-existing tables that lack them
+        for col, coldef in [
+            ("artifact_filename", "TEXT"),
+            ("md5_hash",          "TEXT"),
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE build_artifact ADD COLUMN {col} {coldef}")
+            except sqlite3.OperationalError:
+                pass
+
+        for a in artifacts:
+            cur.execute(
+                """
+                INSERT INTO build_artifact
+                    (report_id, test_id, artifact_key, artifact_path,
+                     artifact_filename, exists_on_disk, file_size, md5_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (report_id, test_id,
+                 a["artifact_key"], a["artifact_path"],
+                 a["artifact_filename"],
+                 a["exists_on_disk"], a["file_size"], a["md5_hash"])
+            )
+
+        conn.commit()
+        conn.close()
+
+    def get_build_artifacts(self, report_id: int) -> list[dict]:
+        """Return all build artifacts for a given report_id."""
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT artifact_key, artifact_path, artifact_filename,
+                   exists_on_disk, file_size, md5_hash
+            FROM build_artifact
+            WHERE report_id = ?
+            ORDER BY id ASC
+        """, (report_id,))
+        rows = cur.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_latest_build_artifacts(self, test_id: str) -> list[dict]:
+        """
+        Return build artifacts from the most recent report for a given test_id.
+        """
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT ba.artifact_key, ba.artifact_path, ba.artifact_filename,
+                   ba.exists_on_disk, ba.file_size, ba.md5_hash
+            FROM build_artifact ba
+            WHERE ba.report_id = (
+                SELECT MAX(report_id) FROM build_artifact WHERE test_id = ?
+            )
+            ORDER BY ba.id ASC
+        """, (test_id,))
+        rows = cur.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
 
 
     def get_reports_by_test_id(self, test_id):
@@ -365,5 +618,120 @@ class ReportDB:
                 results[dict_key]["status"] = "PASS"
 
         return list(results.values())
+
+
+    # V1 api read helper
+
+    @staticmethod
+    def _derive_status(results):
+        """build list of per-step status strings up to one overall PASS/FAIL."""
+        for r in results:
+            s = (r.get("status") or "").upper()
+            if s in ("FAIL", "ERROR"):
+                return "FAIL"
+        return "PASS" if results else "UNKNOWN"
+
+    def list_reports(self, limit=50):
+        """list of reports with a rolled-up overall status.
+
+        sorted most recent first 
+
+        [{report_id, path, timestamp, total_duration, status}]
+        `timestamp` is the report's subdir name (e.g. 20260704_120000)
+        """
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT r.id AS report_id,
+                   r.path AS path,
+                   SUM(tr.duration) AS total_duration,
+                   CASE WHEN MIN(tr.status) IN ('FAIL', 'ERROR') THEN 'FAIL'
+                        ELSE 'PASS' END AS status,
+                   MIN(tr.start_time) AS started_at
+            FROM report r
+            LEFT JOIN test_result tr ON tr.report_id = r.id
+            GROUP BY r.id, r.path
+            ORDER BY r.id DESC
+            LIMIT ?
+        """, (limit,))
+        rows = cur.fetchall()
+        conn.close()
+
+        out = []
+        for r in rows:
+            path = r["path"] or ""
+            out.append({
+                "report_id":      r["report_id"],
+                "path":           path,
+                "timestamp":      os.path.dirname(path) or path,
+                "total_duration": round(r["total_duration"], 2) if r["total_duration"] is not None else 0.0,
+                "status":         (r["status"] or "UNKNOWN").upper(),
+                "started_at":     r["started_at"],
+            })
+        return out
+
+    def get_report_json(self, report_id):
+        """metadata + per-step results + build artifacts.
+
+        Returns None if the report_id does not exist.
+        """
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("SELECT id, path FROM report WHERE id = ?", (report_id,))
+        report_row = cur.fetchone()
+        if not report_row:
+            conn.close()
+            return None
+
+        cur.execute(
+            "SELECT * FROM test_result WHERE report_id = ? ORDER BY test_index",
+            (report_id,),
+        )
+        result_rows = cur.fetchall()
+        conn.close()
+
+        results = []
+        for r in result_rows:
+            screenshots = [s for s in (r["screenshot"] or "").split(",") if s]
+            results.append({
+                "index":     r["test_index"],
+                "test_id":   r["test_id"],
+                "name":      r["name"],
+                "status":    r["status"],
+                "duration":  r["duration"],
+                "output":    r["output"],
+                "stdout":    r["stdout"],
+                "start_time": r["start_time"],
+                "stop_time":  r["stop_time"],
+                "screenshots": screenshots,
+            })
+
+        path = report_row["path"] or ""
+        return {
+            "report_id":      report_row["id"],
+            "path":           path,
+            "timestamp":      os.path.dirname(path) or path,
+            "status":         self._derive_status(results),
+            "total_duration": round(sum(x["duration"] or 0.0 for x in results), 2),
+            "results":        results,
+            "artifacts":      self.get_build_artifacts(report_id),
+        }
+
+    def get_report_id_for_path(self, rel_path):
+        """Resolve a stored relative report path (e.g. '20260704.../mod.html')
+        back to its report_id. Returns None if not found."""
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM report WHERE path = ? ORDER BY id DESC LIMIT 1",
+            (rel_path,),
+        )
+        row = cur.fetchone()
+        conn.close()
+        return row[0] if row else None
+
 
 db = ReportDB()

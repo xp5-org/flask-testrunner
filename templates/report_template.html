@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Report - {{testlist_name}}</title>
+  <style>
+    body { font-family: sans-serif; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    .green { background-color: #c8f7c5; }
+    .red   { background-color: #f7c5c5; }
+    .gray  { background-color: #eeeeee; }
+
+    .flex-container {
+      display: flex;
+      gap: 20px;
+      flex-wrap: nowrap;
+      max-width: 100%;
+    }
+    .output-column {
+      flex: 1;
+      min-width: 0;
+      max-width: 50%;
+      overflow: hidden;
+      background-color: #f0f0f0;
+      padding: 10px;
+    }
+    .image-column {
+      flex: 1;
+      max-width: 50%;
+    }
+    .artifact-section {
+      width: 100%;
+      margin-top: 20px;
+    }
+    pre {
+      background-color: #eee;
+      padding: 10px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+    hr { margin: 40px 0; }
+  </style>
+</head>
+<body>
+
+<h1>Test Report: {{testlist_name}}</h1>
+<table>
+  <tr><th>Test Name</th><th>Duration (s)</th><th>Result</th></tr>
+  {{summary_rows}}
+</table>
+
+<h2>Build Artifacts</h2>
+<div class="artifact-section">
+  {{artifacts_table}}
+</div>
+
+<h2>Detailed Output</h2>
+{{detail_sections}}
+
+</body>
+</html>

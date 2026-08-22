@@ -14,6 +14,17 @@
     table-layout: auto;
 }
 
+.test-table th:nth-child(1), .test-table td:nth-child(1) { width: 30%; }
+.test-table th:nth-child(2), .test-table td:nth-child(2) {
+    width: 20%;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.test-table th:nth-child(3), .test-table td:nth-child(3) { width: 12%; }
+.test-table th:nth-child(4), .test-table td:nth-child(4) { width: auto; }
+
 /* tiling the run buttons */
 td button {
     margin: 2px;
@@ -65,15 +76,33 @@ document.addEventListener("DOMContentLoaded", async () => {
     const failedContainer = document.getElementById("failed-tests-container");
 
     try {
-        const res = await fetch("/failed_tests");
-        const failedTests = await res.json();
+        const res = await fetch("/api/v1/failed-loads");
+        const data = (await res.json()).data;
+        const failedTests = data.failed || [];
+        const warnings = data.warnings || [];
+        let html = "";
 
         if (failedTests.length > 0) {
-            const html = `<div style="color: red; margin-top: 8px;">
-                            <strong>Failed to load:</strong> ${failedTests.join(", ")}
-                          </div>`;
-            failedContainer.innerHTML = html;
+            const uniqueTests = [...new Set(failedTests)];
+            const items = uniqueTests.map(modname => {
+                const path = "sourcedir/" + modname.split(".").join("/") + ".py";
+                return `<li>${modname} <code>(${path})</code></li>`;
+            }).join("");
+            html += `<div style="color: red; margin-top: 8px;">
+                        <strong>Failed to load:</strong>
+                        <ul style="margin: 4px 0 0 0;">${items}</ul>
+                      </div>`;
         }
+
+        if (warnings.length > 0) {
+            const items = warnings.map(w => `<li>${w.message}</li>`).join("");
+            html += `<div style="color: #8a6d00; margin-top: 8px;">
+                        <strong>⚠ Testlist warnings:</strong>
+                        <ul style="margin: 4px 0 0 0;">${items}</ul>
+                      </div>`;
+        }
+
+        failedContainer.innerHTML = html;
     } catch (err) {
         console.error("Error fetching failed tests:", err);
     }
@@ -121,7 +150,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         statusEl.textContent = `Progress: Starting ${displayName}...`;
         
         try {
-            const response = await fetch(`/run/${encodeURIComponent(file)}`);
+            const response = await fetch(`/api/v1/runs`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ test: file })
+            });
             
             if (response.ok) {
                 if (!isPolling) {
@@ -141,8 +174,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         const statusEl = document.getElementById("progress-status");
         
         try {
-            const res = await fetch("/progress");
-            const data = await res.json();
+            const res = await fetch("/api/v1/runs/current");
+            const data = (await res.json()).data;
 
             if (data.step === "Done") {
                 if (isPolling) {
@@ -180,8 +213,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     const container = document.getElementById("testfile-container");
     const systemFilter = document.getElementById("system-filter");
 
-    const testRes = await fetch("/testfile_list");
-    const testfiles = await testRes.json();
+    const testRes = await fetch("/api/v1/tests");
+    const testfiles = (await testRes.json()).data.tests;
 
     const platforms = testfiles.reduce((acc, t) => {
         const p = t.platform || "Unknown";
@@ -198,28 +231,40 @@ document.addEventListener("DOMContentLoaded", async () => {
         let html = `<div class="platform-section" data-platform="${platform}">
                         <h3>${platform}</h3>
                         <table class="test-table">
-                            <tr><th>ID</th><th>System</th><th>Run</th></tr>`;
+                            <tr><th>Name</th><th>Test ID</th><th>System</th><th>Run</th></tr>`;
 
+        // group_key is computed by the API (testname + system, slugified).
+        // Don't rebuild that rule here -- it used to live only in this file,
+        // which made it invisible why two testlists did or didn't share a row.
         const grouped = {};
         tests.forEach(test => {
-            const key = `${test.display_name}|${test.system}`;
+            const key = test.group_key || `${test.display_name}|${test.system}`;
             if (!grouped[key]) grouped[key] = [];
             grouped[key].push(test);
         });
 
 Object.values(grouped).forEach(group => {
     const test = group[0];
+    // Each variant carries its own slug id, so buttons on a shared row still
+    // run their own testlist file.
     const buttons = group.map(t =>
-        Object.entries(t.types || {}).map(([type, file]) =>
-            `<button onclick="startTest('${t.module}', '${t.display_name}', '${type}')">${type}</button>`
-        ).join("")
-    ).join("");
+    (t.variants || Object.entries(t.types || {}).map(([type]) => ({
+        variant: type, id: t.id, status: (t.latest_status || {})[type] || ""
+    }))).map(v => {
+        let cls = "gray";
+        if (v.status === "PASS") cls = "green";
+        if (v.status === "FAIL") cls = "red";
 
-    html += `<tr>
-                <td><span class="test-link" data-testid="${test.id}">${test.display_name}</span></td>
-                <td class="buttons-col">${test.system}</td>
-                <td class="buttons-cell">${buttons}</td>
-             </tr>`;
+        return `<button class="${cls}" onclick="startTest('${v.id}', '${t.display_name}', '${v.variant}')">${v.variant}</button>`;
+    }).join("")
+).join("");
+
+html += `<tr>
+    <td><span class="test-link" data-testid="${test.id}">${test.group_label || test.display_name}</span></td>
+    <td><span class="test-link" data-testid="${test.id}">${test.id}</span></td>
+    <td class="buttons-col">${test.system}</td>
+    <td class="buttons-cell">${buttons}</td>
+</tr>`;
 });
 
 
@@ -236,9 +281,13 @@ const updateStriping = (rows) => {
         // Alternate button colors to match row striping
         const buttons = row.querySelectorAll(".buttons-cell button");
         buttons.forEach((btn, j) => {
-            btn.style.backgroundColor = (i % 2 === 0) ? "#007bff" : "#3399ff";
-            btn.style.color = "white";
-        });
+    if (btn.classList.contains("green") || btn.classList.contains("red")) {
+        return;
+    }
+
+    btn.style.backgroundColor = (i % 2 === 0) ? "#007bff" : "#3399ff";
+    btn.style.color = "white";
+});
     });
 };
 

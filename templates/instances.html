@@ -1,0 +1,342 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  #ic-wrap { font-family: sans-serif; padding: 16px; color:#222; }
+  #ic-wrap h2 { font-size:1.1rem; margin-bottom:4px; }
+  #ic-wrap .sub { color:#777; font-size:0.85rem; margin-bottom:14px; }
+  #ic-cols { display:flex; gap:18px; align-items:flex-start; }
+  #ic-cols > section { border:1px solid #d8d8d8; border-radius:6px; padding:12px; min-width:0; }
+  #ic-left  { flex:0 0 300px; }
+  #ic-right { flex:1; }
+  #ic-cols h3 { font-size:0.95rem; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:6px; }
+  .inst { border:1px solid #e2e2e2; border-radius:5px; padding:9px; margin-bottom:7px;
+    background:#fafafa; cursor:pointer; }
+  .inst:hover { border-color:#1a5fd4; }
+  .inst.sel { border-color:#1a5fd4; background:#eef4ff; }
+  .inst .name { font-weight:600; font-size:0.9rem; }
+  .inst .meta { color:#777; font-size:0.75rem; margin-top:3px; font-family:monospace; }
+  .kindpill { font-size:0.68rem; background:#eef; color:#1a5fd4; border-radius:10px;
+    padding:1px 7px; margin-right:5px; text-transform:uppercase; }
+  .sourcepill { font-size:0.68rem; background:#f0f0f0; color:#888; border-radius:10px; padding:1px 7px; }
+  .cappill { display:inline-block; font-size:0.7rem; background:#f4f4f4; color:#555;
+    border-radius:10px; padding:2px 8px; margin:2px 4px 0 0; }
+  .slot { border:1px solid #e2e2e2; border-radius:5px; padding:10px; margin-bottom:8px; background:#fafafa; }
+  .slot .row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .slot .dev { font-weight:600; font-family:monospace; }
+  .slot .cur { font-size:0.8rem; color:#555; margin-top:4px; font-family:monospace; word-break:break-all; }
+  .slot .cur.empty { color:#aa8; font-style:italic; font-family:sans-serif; }
+  .slot.fixed { background:#f4f4f4; }
+  .pill { font-size:0.72rem; background:#eef; color:#1a5fd4; border-radius:10px; padding:1px 8px; }
+  .pill.ro   { background:#f3edff; color:#6b3fd4; }
+  .pill.fix  { background:#f0f0f0; color:#888; }
+  button.db { border:none; border-radius:4px; padding:5px 10px; cursor:pointer; color:#fff; font-size:0.82rem; }
+  button.db.attach { background:#1a8a50; }
+  button.db.detach { background:#b02a1a; }
+  button.db.refresh { background:#666; }
+  button.db.send { background:#1a5fd4; }
+  button.db:disabled { background:#bbb; cursor:not-allowed; }
+  #ic-wrap label { font-size:0.82rem; display:block; margin-top:6px; }
+  #ic-wrap select, #ic-wrap input, #ic-wrap textarea {
+    width:100%; padding:5px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; font-size:0.85rem; }
+  #ic-status { margin-top:12px; padding:8px 10px; border-radius:4px; font-size:0.85rem;
+    white-space:pre-wrap; display:none; }
+  #ic-status.ok  { background:#eaf7ef; color:#1a8a50; display:block; }
+  #ic-status.err { background:#fdecea; color:#b02a1a; display:block; }
+  .cap-section { margin-bottom:18px; }
+  .cap-section h4 { font-size:0.85rem; margin-bottom:8px; color:#444; }
+  .cap-section img { max-width:100%; border:1px solid #ddd; border-radius:4px; }
+  .cap-section pre { background:#fafafa; border:1px solid #e2e2e2; border-radius:4px;
+    padding:8px; max-height:280px; overflow:auto; font-size:0.8rem; white-space:pre-wrap; }
+</style>
+
+<div id="ic-wrap">
+  <h2>Live Instances</h2>
+  <div class="sub">Every process the project's testrunner can currently see — VICE, QEMU, Basilisk,
+    a relay server, whatever is registered — started by a test or launched by hand. Capabilities
+    (screenshot / ocr / tty / media / keys) vary by instance and are read from
+    <code>/api/v1/instances</code>.</div>
+
+  <div id="ic-cols">
+    <section id="ic-left">
+      <div style="display:flex; justify-content:space-between; align-items:center;
+                  border-bottom:1px solid #eee; padding-bottom:6px; margin-bottom:10px;">
+        <h3 style="margin:0; border:none; padding:0;">Running</h3>
+        <button class="db refresh" onclick="loadInstances()">↻</button>
+      </div>
+      <div id="inst-list"><em style="color:#999;">loading…</em></div>
+    </section>
+
+    <section id="ic-right">
+      <h3>Instance</h3>
+      <div id="panel"><em style="color:#999;">select an instance</em></div>
+    </section>
+  </div>
+
+  <div id="ic-status"></div>
+</div>
+
+<script>
+let INSTANCES = [];
+let SEL = null;          // selected instance (object)
+let CHOICES = [];        // attachable images for media slots: {label, path, group, kind}
+let INST_SIG = null;
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function status(msg, ok) {
+  const el = document.getElementById("ic-status");
+  el.textContent = msg;
+  el.className = ok ? "ok" : "err";
+}
+async function getJSON(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+async function postJSON(url, body) {
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
+                             body:JSON.stringify(body)});
+  return r.json();
+}
+
+async function loadInstances({background = false} = {}) {
+  const j = await getJSON("/api/v1/instances");
+  const el = document.getElementById("inst-list");
+  if (j.error) {
+    el.innerHTML = `<span style="color:#b02a1a;">${esc(j.error.message)}</span>`;
+    INST_SIG = null;
+    return;
+  }
+  INSTANCES = j.data.instances || [];
+  if (!INSTANCES.length) {
+    el.innerHTML = '<em style="color:#999;">nothing running — start a test or launch one by hand</em>';
+    document.getElementById("panel").innerHTML = '<em style="color:#999;">select an instance</em>';
+    SEL = null;
+    INST_SIG = null;
+    return;
+  }
+  const isig = JSON.stringify(INSTANCES.map(i =>
+    [i.id, i.label, i.kind, i.source, (i.capabilities || []).join(","), SEL && SEL.id === i.id]));
+  if (!(background && isig === INST_SIG)) {
+    el.innerHTML = INSTANCES.map(i => `
+      <div class="inst ${SEL && SEL.id === i.id ? 'sel' : ''}"
+           onclick="selectInstance('${esc(i.id)}')" title="${esc((i.detail || {}).cmdline || '')}">
+        <div class="name">
+          <span class="kindpill">${esc(i.kind)}</span>${esc(i.label)}
+        </div>
+        <div class="meta">pid ${esc(i.pid)} · <span class="sourcepill">${esc(i.source)}</span></div>
+        <div style="margin-top:5px;">
+          ${(i.capabilities || []).map(c => `<span class="cappill">${esc(c)}</span>`).join("")}
+        </div>
+      </div>`).join("");
+    INST_SIG = isig;
+  }
+  if (SEL) {
+    const still = INSTANCES.find(i => i.id === SEL.id);
+    if (still) { SEL = still; renderPanel({background}); }
+    else {
+      SEL = null;
+      document.getElementById("panel").innerHTML =
+        '<em style="color:#b02a1a;">that instance exited</em>';
+    }
+  }
+}
+
+function selectInstance(id) {
+  SEL = INSTANCES.find(i => i.id === id) || null;
+  loadInstances();
+  renderPanel();
+}
+
+function renderPanel({background = false} = {}) {
+  if (!SEL) {
+    document.getElementById("panel").innerHTML = '<em style="color:#999;">select an instance</em>';
+    return;
+  }
+  if (background) return;   // panel content is loaded lazily per-capability below, not polled
+  const caps = SEL.capabilities || [];
+  const sections = [];
+  if (caps.includes("screenshot")) sections.push(screenshotSection());
+  if (caps.includes("ocr")) sections.push(ocrSection());
+  if (caps.includes("tty")) sections.push(ttySection());
+  if (caps.includes("media")) sections.push(mediaSection());
+  if (caps.includes("keys")) sections.push(keysSection());
+  document.getElementById("panel").innerHTML =
+    sections.join("") || '<em style="color:#999;">this instance offers no actions</em>';
+  if (caps.includes("media")) loadMedia();
+}
+
+function screenshotSection() {
+  return `<div class="cap-section" id="sec-screenshot">
+    <h4>Screenshot <button class="db refresh" onclick="refreshScreenshot()">↻</button></h4>
+    <img id="ss-img" src="/api/v1/instances/${encodeURIComponent(SEL.id)}/screenshot?_=${Date.now()}">
+  </div>`;
+}
+function refreshScreenshot() {
+  const img = document.getElementById("ss-img");
+  if (img) img.src = `/api/v1/instances/${encodeURIComponent(SEL.id)}/screenshot?_=${Date.now()}`;
+}
+
+function ocrSection() {
+  return `<div class="cap-section" id="sec-ocr">
+    <h4>OCR <button class="db refresh" onclick="refreshOcr()">Read</button></h4>
+    <pre id="ocr-text">—</pre>
+  </div>`;
+}
+async function refreshOcr() {
+  const el = document.getElementById("ocr-text");
+  el.textContent = "reading…";
+  const j = await getJSON(`/api/v1/instances/${encodeURIComponent(SEL.id)}/ocr`);
+  el.textContent = j.error ? j.error.message : (j.data.text || "(empty)");
+}
+
+function ttySection() {
+  return `<div class="cap-section" id="sec-tty">
+    <h4>TTY <button class="db refresh" onclick="refreshTty()">↻</button></h4>
+    <pre id="tty-text">—</pre>
+  </div>`;
+}
+async function refreshTty() {
+  const el = document.getElementById("tty-text");
+  const j = await getJSON(`/api/v1/instances/${encodeURIComponent(SEL.id)}/tty?tail=200`);
+  el.textContent = j.error ? j.error.message : (j.data.text || j.data || "(empty)");
+}
+
+function keysSection() {
+  return `<div class="cap-section" id="sec-keys">
+    <h4>Send keys</h4>
+    <textarea id="keys-text" rows="2" placeholder="text to type, e.g. dir /w"></textarea>
+    <label style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+      <input type="checkbox" id="keys-enter" style="width:auto;"> press Enter after
+    </label>
+    <button class="db send" style="margin-top:6px;" onclick="sendKeys()">Send</button>
+  </div>`;
+}
+async function sendKeys() {
+  const text = document.getElementById("keys-text").value;
+  const enter = document.getElementById("keys-enter").checked;
+  if (!text && !enter) { status("Nothing to send.", false); return; }
+  const j = await postJSON(`/api/v1/instances/${encodeURIComponent(SEL.id)}/keys`, {text, enter});
+  status(j.error ? j.error.message : "sent", !j.error);
+}
+
+function mediaSection() {
+  return `<div class="cap-section" id="sec-media">
+    <h4>Drives <button class="db refresh" onclick="loadMedia()">↻</button></h4>
+    <div id="slots"><em style="color:#999;">reading drives…</em></div>
+  </div>`;
+}
+
+async function loadMedia() {
+  const el = document.getElementById("slots");
+  if (!el || !SEL) return;
+  const j = await getJSON(`/api/v1/instances/${encodeURIComponent(SEL.id)}/media`);
+  if (j.error) {
+    el.innerHTML = `<span style="color:#b02a1a;">${esc(j.error.message)}</span>`;
+    return;
+  }
+  const blocks = j.data.blocks || [];
+  if (!blocks.length) {
+    el.innerHTML = '<em style="color:#999;">this instance has no drives</em>';
+    return;
+  }
+  el.innerHTML = blocks.map(b => renderSlot(b)).join("");
+}
+
+function renderSlot(b) {
+  const accepts = (b.accepts && b.accepts.length) ? b.accepts : ["floppy", "iso"];
+  const fit = CHOICES.filter(c => accepts.includes(c.kind));
+  const opts = fit.length
+    ? groupedOptions(fit)
+    : `<option value="">— no ${accepts.join("/")} images in library —</option>`;
+  return `
+    <div class="slot ${b.removable ? '' : 'fixed'}">
+      <div class="row">
+        <span class="dev">${esc(b.device)}${b.drive_label
+          ? ` <span class="pill">${esc(b.drive_label)}</span>` : ''}</span>
+        <span style="display:flex; gap:6px; align-items:center;">
+          ${b.readonly ? '<span class="pill ro">read-only</span>' : ''}
+          ${b.removable ? '<span class="pill">removable</span>'
+                        : '<span class="pill fix">fixed disk</span>'}
+        </span>
+      </div>
+      <div class="cur ${b.inserted ? '' : 'empty'}">
+        ${b.inserted ? esc(b.path) : "(empty)"}
+      </div>
+      ${b.removable ? `
+        <div style="margin-top:8px; display:flex; gap:8px; align-items:flex-end;">
+          <label style="flex:1; margin:0;">Attach ${esc(accepts.join("/"))} image
+            <select id="pick-${esc(b.device)}">${opts}</select>
+          </label>
+          <button class="db attach" onclick="attach('${esc(b.device)}')">Attach</button>
+          <button class="db detach" ${b.inserted ? '' : 'disabled'}
+            onclick="detach('${esc(b.device)}', false)">Eject</button>
+        </div>` : `
+        <div class="note" style="font-size:0.75rem; color:#8a6d1a; background:#fdf6e3;
+          border-radius:4px; padding:6px 8px; margin-top:8px;">Fixed disk — swapping it on a live
+          guest would need a reboot to be seen, so it isn't offered here.</div>`}
+    </div>`;
+}
+
+function groupedOptions(choices) {
+  const groups = {};
+  choices.forEach(c => { (groups[c.group] = groups[c.group] || []).push(c); });
+  return '<option value="">— select an image —</option>' +
+    Object.keys(groups).map(g =>
+      `<optgroup label="${esc(g)}">` +
+      groups[g].map(c => `<option value="${esc(c.path)}">${esc(c.label)}</option>`).join("") +
+      `</optgroup>`).join("");
+}
+
+function kindForImage(name, sizeMb) {
+  if (/\.(iso|cdr)$/i.test(name)) return "iso";
+  return (sizeMb != null && sizeMb <= 2.9) ? "floppy" : "hdd";
+}
+
+async function loadChoices() {
+  CHOICES = [];
+  try {
+    const mj = await (await fetch("/api/list_media")).json();
+    (mj.media || []).filter(m => !m.missing && m.kind !== "hdd").forEach(m =>
+      CHOICES.push({group: "Media library", path: m.abs_path, kind: m.kind,
+                    label: (m.shortname ? m.shortname + " — " : "") + m.rel_path}));
+  } catch (e) { /* library is optional */ }
+  try {
+    const ij = await (await fetch("/api/list_disk_images")).json();
+    (ij.images || []).filter(i => i.exists).forEach(i => {
+      const kind = kindForImage(i.filename, i.size_mb);
+      if (kind === "hdd") return;   // can't hot-swap a hard disk into a live guest
+      CHOICES.push({group: "Project dirs", path: i.path, kind,
+                    label: i.project + "/" + i.filename});
+    });
+  } catch (e) { /* no projects is fine */ }
+}
+
+async function attach(device) {
+  const sel = document.getElementById("pick-" + device);
+  const path = sel ? sel.value : "";
+  if (!path) { status("Pick an image to attach.", false); return; }
+  status("Attaching to " + device + "…", true);
+  const j = await postJSON(`/api/v1/instances/${encodeURIComponent(SEL.id)}/media`,
+                           {op: "attach", device, path});
+  status(j.error ? j.error.message : "attached", !j.error);
+  loadMedia();
+}
+
+async function detach(device, force) {
+  const j = await postJSON(`/api/v1/instances/${encodeURIComponent(SEL.id)}/media`,
+                           {op: "detach", device, force});
+  if (j.error && /locked/i.test(j.error.message) && !force) {
+    if (confirm(j.error.message + "\n\nForce the eject anyway? If the guest is mid-write, "
+              + "the image can end up corrupt.")) return detach(device, true);
+  }
+  status(j.error ? j.error.message : "detached", !j.error);
+  loadMedia();
+}
+
+loadChoices().then(() => loadInstances());
+setInterval(() => loadInstances({background: true}), 5000);
+</script>
+{% endblock %}

@@ -1,0 +1,112 @@
+<style>
+    .spreadsheet { display: table; width: 100%; border-collapse: collapse; font-family: sans-serif; }
+    .row { display: table-row; border-bottom: 1px solid #eee; }
+    .cell { display: table-cell; padding: 8px; vertical-align: middle; }
+    .label-cell { width: 30%; font-weight: bold; color: #444; font-size: 0.85em; background: #fafafa; border-right: 1px solid #eee; }
+    .section-head { background: #e9ecef; font-weight: bold; font-size: 0.8em; text-transform: uppercase; letter-spacing: 1px; }
+    
+    .spreadsheet input, .spreadsheet select, .spreadsheet textarea { 
+        width: 100%; padding: 4px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 3px; 
+    }
+    .spreadsheet input[readonly] { background-color: #f9f9f9; color: #777; font-family: monospace; }
+    .json-preview { height: 150px; font-family: monospace; font-size: 0.8em; }
+</style>
+
+<div class="spreadsheet">
+    <div class="row section-head"><div class="cell" colspan="2">Source Selection</div></div>
+    <div class="row">
+        <div class="cell label-cell">System Filter</div>
+        <div class="cell"><select id="system-filter"><option value="all">All Systems</option></select></div>
+    </div>
+    <div class="row">
+        <div class="cell label-cell">Source Test</div>
+        <div class="cell"><select id="sourcetestlist"></select></div>
+    </div>
+
+    <div class="row section-head"><div class="cell" colspan="2">Configuration Parameters</div></div>
+    <div id="dynamic-config-container">
+        <div class="row"><div class="cell" colspan="2" style="text-align:center; color:#999; padding:20px;">Select a source to edit</div></div>
+    </div>
+
+    <div class="row section-head"><div class="cell" colspan="2">Structure Reference</div></div>
+    <div class="row">
+        <div class="cell" colspan="2">
+            <textarea id="structure-display" class="json-preview" readonly></textarea>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    let allTestData = [];
+
+    // Initialization: Fetch lists
+    fetch('/testfile_list')
+        .then(r => r.json())
+        .then(data => {
+            allTestData = data;
+            const sysFilter = document.getElementById('system-filter');
+            const systems = [...new Set(data.map(item => item.system).filter(Boolean))].sort();
+            
+            systems.forEach(sys => {
+                const opt = document.createElement('option');
+                opt.value = sys; opt.textContent = sys;
+                sysFilter.appendChild(opt);
+            });
+            renderList('all');
+        });
+
+    function renderList(filter) {
+        const sel = document.getElementById('sourcetestlist');
+        sel.innerHTML = '<option value="">-- Select Source --</option>';
+        const filtered = filter === 'all' ? allTestData : allTestData.filter(i => i.system === filter);
+        
+        filtered.forEach(item => {
+            const opt = document.createElement('option');
+            opt.value = item.module;
+            opt.textContent = `${item.id || item.module}`;
+            sel.appendChild(opt);
+        });
+    }
+
+    document.getElementById('system-filter').onchange = (e) => renderList(e.target.value);
+
+    document.getElementById('sourcetestlist').onchange = (e) => {
+        if (!e.target.value) return;
+        fetch(`/module_path?src_module=${encodeURIComponent(e.target.value)}`)
+            .then(r => r.json())
+            .then(res => {
+                if (res.config) buildEditor(res.config);
+            });
+    };
+
+    function buildEditor(config) {
+        const container = document.getElementById('dynamic-config-container');
+        const structDisp = document.getElementById('structure-display');
+        container.innerHTML = '';
+        
+        const structureKeys = ['structure', 'steps', 'paths'];
+        const viewOnly = {};
+
+        Object.keys(config).sort().forEach(key => {
+            if (structureKeys.includes(key)) {
+                viewOnly[key] = config[key];
+                return;
+            }
+            if (key.startsWith('_')) return;
+
+            const row = document.createElement('div');
+            row.className = 'row';
+            row.innerHTML = `
+                <div class="cell label-cell">${key}</div>
+                <div class="cell">
+                    <input type="text" class="config-input" data-key="${key}" value="${config[key] ?? ''}">
+                </div>
+            `;
+            container.appendChild(row);
+        });
+
+        structDisp.value = JSON.stringify(viewOnly, null, 4);
+    }
+})();
+</script>

@@ -1,0 +1,593 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  #db-wrap { font-family: sans-serif; padding: 16px; color:#222; }
+  #db-wrap h2 { font-size:1.1rem; margin-bottom:4px; }
+  #db-wrap .sub { color:#777; font-size:0.85rem; margin-bottom:14px; }
+  #db-cols { display:flex; gap:18px; align-items:flex-start; }
+  #db-cols > section { flex:1; border:1px solid #d8d8d8; border-radius:6px; padding:12px; min-width:0; }
+  #db-cols h3 { font-size:0.95rem; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:6px; }
+  .art-card { border:1px solid #e2e2e2; border-radius:5px; padding:10px; margin-bottom:8px; background:#fafafa; }
+  .art-card .name { font-weight:600; }
+  .art-card .meta { color:#777; font-size:0.78rem; margin-top:2px; }
+  .art-card .desc { font-size:0.82rem; margin-top:4px; }
+  .art-card .row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .pill { font-size:0.72rem; background:#eef; color:#1a5fd4; border-radius:10px; padding:1px 8px; }
+  .pill.warn { background:#fdecea; color:#b02a1a; }
+  button.db { border:none; border-radius:4px; padding:5px 10px; cursor:pointer; color:#fff; font-size:0.82rem; }
+  button.db.inject { background:#1a8a50; }
+  button.db.remove { background:#b02a1a; }
+  button.db.capture { background:#1a5fd4; }
+  button.db:disabled { background:#bbb; cursor:not-allowed; }
+  #db-wrap label { font-size:0.82rem; display:block; margin-top:6px; }
+  #db-wrap input, #db-wrap select, #db-wrap textarea {
+    width:100%; padding:5px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; font-size:0.85rem; }
+  .disk-dir { display:flex; justify-content:space-between; align-items:center;
+    padding:6px 8px; border:1px solid #eee; border-radius:4px; margin-bottom:5px; font-family:monospace; font-size:0.82rem; }
+  #db-status { margin-top:12px; padding:8px 10px; border-radius:4px; font-size:0.85rem; white-space:pre-wrap; display:none; }
+  #db-status.ok { background:#eaf7ef; color:#1a8a50; display:block; }
+  #db-status.err { background:#fdecea; color:#b02a1a; display:block; }
+  details.cap { margin-top:14px; border-top:1px dashed #ddd; padding-top:10px; }
+  details.cap summary { cursor:pointer; font-weight:600; font-size:0.88rem; }
+  .pill.floppy { background:#eef6ff; color:#1a5fd4; }
+  .pill.iso    { background:#f3edff; color:#6b3fd4; }
+  .pill.hdd    { background:#eef7ef; color:#1a8a50; }
+  .pill.gone   { background:#fdecea; color:#b02a1a; font-weight:600; }
+  /* A missing file is an error state, not a dimmed one — the item must still be
+     readable (its notes are the point) but obviously broken at a glance. */
+  .art-card.missing { border-color:#e6b3ab; background:#fdf6f5; border-left:3px solid #b02a1a; }
+  .art-card.missing .name { color:#b02a1a; }
+  .xmark { color:#b02a1a; font-weight:700; margin-right:5px; }
+  details.item { margin-top:6px; }
+  details.item > summary { cursor:pointer; font-size:0.82rem; color:#555; list-style:none;
+    display:flex; align-items:center; gap:6px; }
+  details.item > summary::-webkit-details-marker { display:none; }
+  details.item > summary::before { content:"▸"; color:#999; font-size:0.7rem; }
+  details.item[open] > summary::before { content:"▾"; }
+  details.item > summary .snip { color:#777; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; min-width:0; }
+  .item-body { margin-top:8px; padding:10px; background:#fff; border:1px solid #eee; border-radius:4px; }
+  .item-body .long { font-size:0.85rem; white-space:pre-wrap; margin-bottom:10px; color:#333; }
+  .item-body .long.empty { color:#aa8; font-style:italic; }
+  .item-body .fields { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start; }
+  .item-body .fields > label { flex:1; min-width:150px; }
+  .path-ref { font-family:monospace; font-size:0.78rem; background:#f6f6f6; border:1px solid #e5e5e5;
+    border-radius:4px; padding:6px 8px; word-break:break-all; }
+  .note { font-size:0.75rem; color:#8a6d1a; background:#fdf6e3; border-radius:4px;
+    padding:6px 8px; margin-top:6px; }
+  .note.err { color:#b02a1a; background:#fdecea; }
+  .note code { word-break:break-all; }
+</style>
+
+<div id="db-wrap">
+  <h2>Disk Builder</h2>
+  <div class="sub">Capture built objects (e.g. <code>C:\WATCOM</code>) as reusable artifacts, then stuff them
+    in or out of any project's disk image — at creation or edit time. Boot system (<code>C:\DOS</code>) is
+    laid down automatically when a disk is created.</div>
+
+  <!-- TOP: make a new disk -->
+  <section style="border:1px solid #d8d8d8; border-radius:6px; padding:12px; margin-bottom:18px;">
+    <h3 style="font-size:0.95rem; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:6px;">Make a new disk</h3>
+    <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end;">
+      <label style="flex:2; min-width:220px;">Save into project (testlist dir)
+        <select id="mk-proj"><option value="">— select project —</option></select>
+      </label>
+      <label style="flex:1; min-width:130px;">Disk name
+        <input id="mk-name" placeholder="newdisk.img">
+      </label>
+      <label style="flex:1; min-width:90px;">Media
+        <select id="mk-media" onchange="mkMediaChange()">
+          <option value="hdd">Hard disk</option>
+          <option value="floppy">Floppy</option>
+        </select>
+      </label>
+      <label style="flex:1; min-width:90px;">FAT
+        <select id="mk-fat">
+          <option value="">auto</option>
+          <option value="12">FAT12</option>
+          <option value="16">FAT16</option>
+        </select>
+      </label>
+      <label id="mk-size-hdd" style="flex:1; min-width:110px;">Size (MB)
+        <input id="mk-size-mb" type="number" min="1" value="32">
+      </label>
+      <label id="mk-size-flop" style="flex:1; min-width:130px; display:none;">Floppy size
+        <select id="mk-size-kb">
+          <option value="360">360 KB</option>
+          <option value="720">720 KB</option>
+          <option value="1200">1.2 MB</option>
+          <option value="1440" selected>1.44 MB</option>
+          <option value="2880">2.88 MB</option>
+        </select>
+      </label>
+    </div>
+    <div style="margin-top:10px;">
+      <div style="font-size:0.82rem; color:#777; margin-bottom:5px;">Include artifacts (stuffed into the new disk):</div>
+      <div id="mk-artifacts" style="display:flex; gap:14px; flex-wrap:wrap;"><em style="color:#999;">none captured yet</em></div>
+    </div>
+    <div id="mk-bootprio-wrap" style="margin-top:10px; display:none;">
+      <div style="font-size:0.82rem; color:#777; margin-bottom:5px;">
+        Boot config priority — only one artifact can own <code>C:\CONFIG.SYS</code> / <code>C:\AUTOEXEC.BAT</code> (they overwrite root):
+      </div>
+      <div id="mk-bootprio" style="display:flex; gap:14px; flex-wrap:wrap;"></div>
+    </div>
+    <div style="margin-top:12px; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+      <label style="display:inline;"><input type="checkbox" id="mk-boot" style="width:auto;"> bootable DOS <span style="color:#999;font-size:0.78rem;">(hdd only)</span></label>
+      <label style="display:inline;"><input type="checkbox" id="mk-src" style="width:auto;"> add empty <code>src/</code> dir</label>
+      <label style="display:inline;"><input type="checkbox" id="mk-ow" style="width:auto;"> overwrite if exists</label>
+      <button class="db capture" onclick="createDisk()">Create disk →</button>
+    </div>
+  </section>
+
+  <div id="db-cols">
+    <!-- LEFT: artifact repository -->
+    <section>
+      <h3>Artifact Repository</h3>
+      <div id="art-list"><em style="color:#999;">loading…</em></div>
+
+      <details class="cap">
+        <summary>Capture a new artifact</summary>
+        <label>Source disk image
+          <select id="cap-src"><option value="">— select image —</option></select>
+        </label>
+        <label>DOS dir to capture (relative to C:\)
+          <input id="cap-dosdir" placeholder="WATCOM">
+        </label>
+        <label>Artifact name
+          <input id="cap-name" placeholder="watcom">
+        </label>
+        <label>Inject dest (default = same as DOS dir)
+          <input id="cap-dest" placeholder="WATCOM">
+        </label>
+        <label>Description
+          <input id="cap-desc" placeholder="OpenWatcom 2.0 full install tree">
+        </label>
+        <label style="margin-top:8px;"><input type="checkbox" id="cap-ow" style="width:auto;"> overwrite if exists</label>
+        <button class="db capture" style="margin-top:8px;" onclick="captureArtifact()">Capture →</button>
+      </details>
+    </section>
+
+    <!-- RIGHT: edit an existing disk -->
+    <section>
+      <h3>Edit an existing disk</h3>
+      <div style="font-size:0.8rem; color:#999; margin-bottom:8px;">Modify a disk you already built — inject more artifacts or remove dirs.</div>
+      <label>Existing image
+        <select id="disk-sel" onchange="loadDiskContents()"><option value="">— select image —</option></select>
+      </label>
+      <button class="db" style="background:#666; margin-top:8px;" onclick="loadDiskContents()">↻ Refresh contents</button>
+      <div style="margin-top:12px; font-size:0.82rem; color:#777;">Top-level dirs on disk:</div>
+      <div id="disk-dirs" style="margin-top:6px;"><em style="color:#999;">select an image</em></div>
+
+      <div style="margin-top:14px; font-size:0.82rem; color:#777;">Inject an artifact into it:</div>
+      <div id="inject-list" style="margin-top:6px;"><em style="color:#999;">no artifacts</em></div>
+    </section>
+  </div>
+
+  <!-- BOTTOM: media library — whole images dropped into /testsrc/images -->
+  <section style="border:1px solid #d8d8d8; border-radius:6px; padding:12px; margin-top:18px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;
+                border-bottom:1px solid #eee; padding-bottom:6px; margin-bottom:10px;">
+      <h3 style="font-size:0.95rem; margin:0;">Media Library</h3>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <select id="ml-filter" onchange="renderMedia()" style="width:auto; font-size:0.8rem;">
+          <option value="">all kinds</option>
+          <option value="floppy">floppies</option>
+          <option value="iso">ISOs</option>
+          <option value="hdd">hard disks</option>
+        </select>
+        <button class="db capture" onclick="scanMedia()">↻ Rescan</button>
+      </span>
+    </div>
+    <div class="sub" style="margin-bottom:10px;">
+      Whole images you copy into <code id="ml-root">/testsrc/images</code> over SMB — subdirs are fine
+      (<code>win3_1/win31.iso</code>). Rescan picks up new files; expand an item to describe what it is.
+      Floppies get exported into a project as its own copy; ISOs and hard disks are referenced in place.
+    </div>
+    <div id="ml-list"><em style="color:#999;">loading…</em></div>
+  </section>
+
+  <div id="db-status"></div>
+</div>
+
+<script>
+let ARTIFACTS = [];
+let IMAGES = [];
+let MEDIA = [];
+let PROJECTS = [];
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function snippet(s, n) {
+  s = String(s || "").replace(/\s+/g, " ").trim();
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}
+function fmtSize(bytes) {
+  if (!bytes) return "0 B";
+  const mb = bytes / (1024*1024);
+  return mb >= 1 ? mb.toFixed(1) + " MB" : (bytes/1024).toFixed(0) + " KB";
+}
+function status(msg, ok) {
+  const el = document.getElementById("db-status");
+  el.textContent = msg;
+  el.className = ok ? "ok" : "err";
+}
+async function postJSON(url, body) {
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  return r.json();
+}
+
+async function loadArtifacts() {
+  const r = await fetch("/api/list_artifacts");
+  const j = await r.json();
+  ARTIFACTS = j.artifacts || [];
+  renderArtifacts();
+  renderInjectList();
+  renderArtifactChecks();
+}
+function renderArtifacts() {
+  const el = document.getElementById("art-list");
+  if (!ARTIFACTS.length) { el.innerHTML = '<em style="color:#999;">no artifacts captured yet</em>'; return; }
+  el.innerHTML = ARTIFACTS.map(a => `
+    <div class="art-card">
+      <div class="row">
+        <span class="name">${esc(a.name)}</span>
+        <span class="pill ${a._tarball_exists ? '' : 'warn'}">${a._tarball_exists ? fmtSize(a._tarball_size) : 'no tarball'}</span>
+      </div>
+      <div class="meta">→ C:\\${esc(a.dest)}${a.file_count ? '  ·  '+a.file_count+' files' : ''}${a.captured_from ? '  ·  from '+esc(a.captured_from) : ''}</div>
+      <details class="item">
+        <summary><span class="snip">${a.description ? esc(snippet(a.description, 60)) : "no description"}</span></summary>
+        <div class="item-body">
+          <div class="long ${a.description ? '' : 'empty'}">${a.description ? esc(a.description) : "No description was given when this artifact was captured."}</div>
+          <div class="meta">
+            captured from C:\\${esc(a.captured_dos_dir || a.dest)} on ${esc(a.captured_from || "?")}
+            ${a.captured_at ? " · " + esc(a.captured_at) : ""}
+            ${hasBootfiles(a) ? " · carries " + esc(a.bootfiles.join(", ")) : ""}
+          </div>
+        </div>
+      </details>
+    </div>`).join("");
+}
+
+async function loadImages() {
+  const r = await fetch("/api/list_disk_images");
+  const j = await r.json();
+  IMAGES = (j.images || []).filter(i => i.exists);
+  const opts = '<option value="">— select image —</option>' +
+    IMAGES.map(i => `<option value="${i.path}">${i.project}/${i.filename} (${i.size_mb} MB)</option>`).join("");
+  document.getElementById("disk-sel").innerHTML = opts;
+  document.getElementById("cap-src").innerHTML = opts;
+}
+
+async function loadDiskContents() {
+  const path = document.getElementById("disk-sel").value;
+  const el = document.getElementById("disk-dirs");
+  if (!path) { el.innerHTML = '<em style="color:#999;">select an image</em>'; return; }
+  el.innerHTML = '<em style="color:#999;">reading…</em>';
+  const r = await fetch("/api/disk_toplevel?path=" + encodeURIComponent(path));
+  const j = await r.json();
+  if (j.status !== "ok") { el.innerHTML = `<span style="color:#b02a1a;">${j.message}</span>`; return; }
+  if (!j.dirs.length) { el.innerHTML = '<em style="color:#999;">empty</em>'; return; }
+  el.innerHTML = j.dirs.map(d => `
+    <div class="disk-dir">
+      <span>C:\\${d}</span>
+      <button class="db remove" onclick="removeDir('${d}')">Remove</button>
+    </div>`).join("");
+}
+
+function renderInjectList() {
+  const el = document.getElementById("inject-list");
+  if (!ARTIFACTS.length) { el.innerHTML = '<em style="color:#999;">no artifacts</em>'; return; }
+  el.innerHTML = ARTIFACTS.map(a => `
+    <div class="disk-dir">
+      <span>${a.name} → C:\\${a.dest}</span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        ${hasBootfiles(a) ? `<label style="font-size:0.75rem; color:#777;"><input type="checkbox" id="applybf-${a.name}" style="width:auto;"> apply ${a.bootfiles.join("/")}</label>` : ''}
+        <button class="db inject" ${a._tarball_exists ? '' : 'disabled'} onclick="injectArtifact('${a.name}')">Inject →</button>
+      </span>
+    </div>`).join("");
+}
+
+async function injectArtifact(name) {
+  const path = document.getElementById("disk-sel").value;
+  if (!path) { status("Select a target disk image first.", false); return; }
+  const bfBox = document.getElementById("applybf-" + name);
+  status("Injecting " + name + "…", true);
+  const j = await postJSON("/api/inject_artifact",
+    {name, hdd_img_path: path, apply_bootfiles: !!(bfBox && bfBox.checked)});
+  status(j.message, j.status === "ok");
+  if (j.status === "ok") loadDiskContents();
+}
+
+async function removeDir(dest) {
+  const path = document.getElementById("disk-sel").value;
+  if (!confirm("Delete C:\\" + dest + " from the disk image?")) return;
+  status("Removing C:\\" + dest + "…", true);
+  const j = await postJSON("/api/remove_from_disk", {dest, hdd_img_path: path});
+  status(j.message, j.status === "ok");
+  if (j.status === "ok") loadDiskContents();
+}
+
+async function captureArtifact() {
+  const body = {
+    name: document.getElementById("cap-name").value.trim(),
+    source_img: document.getElementById("cap-src").value,
+    dos_dir: document.getElementById("cap-dosdir").value.trim(),
+    dest: document.getElementById("cap-dest").value.trim() || undefined,
+    description: document.getElementById("cap-desc").value.trim(),
+    overwrite: document.getElementById("cap-ow").checked,
+  };
+  if (!body.name || !body.source_img || !body.dos_dir) {
+    status("Need a source image, DOS dir, and artifact name.", false); return;
+  }
+  status("Capturing " + body.name + " (large trees take a while)…", true);
+  const j = await postJSON("/api/capture_artifact", body);
+  status(j.message, j.status === "ok");
+  if (j.status === "ok") loadArtifacts();
+}
+
+function mkMediaChange() {
+  const floppy = document.getElementById("mk-media").value === "floppy";
+  document.getElementById("mk-size-hdd").style.display  = floppy ? "none" : "";
+  document.getElementById("mk-size-flop").style.display = floppy ? "" : "none";
+  const boot = document.getElementById("mk-boot");
+  boot.disabled = floppy;
+  if (floppy) boot.checked = false;
+}
+
+function hasBootfiles(a) { return a.bootfiles && a.bootfiles.length; }
+
+function renderArtifactChecks() {
+  const el = document.getElementById("mk-artifacts");
+  const usable = ARTIFACTS.filter(a => a._tarball_exists);
+  if (!usable.length) { el.innerHTML = '<em style="color:#999;">none captured yet</em>'; return; }
+  el.innerHTML = usable.map(a => `
+    <label style="display:inline; font-size:0.85rem;">
+      <input type="checkbox" class="mk-art" value="${a.name}" onchange="renderBootPriority()" style="width:auto;"> ${a.name}
+      <span style="color:#999; font-size:0.78rem;">→ C:\\${a.dest}</span>
+      ${hasBootfiles(a) ? '<span class="pill" title="carries '+a.bootfiles.join(', ')+'">⚙ boot cfg</span>' : ''}
+    </label>`).join("");
+  renderBootPriority();
+}
+
+// Among the currently-checked artifacts that carry root boot config, let the
+// user pick which one's CONFIG.SYS/AUTOEXEC.BAT wins (or none).
+function renderBootPriority() {
+  const checked = Array.from(document.querySelectorAll(".mk-art:checked")).map(c => c.value);
+  const eligible = ARTIFACTS.filter(a => checked.includes(a.name) && hasBootfiles(a));
+  const wrap = document.getElementById("mk-bootprio-wrap");
+  const el = document.getElementById("mk-bootprio");
+  if (!eligible.length) { wrap.style.display = "none"; el.innerHTML = ""; return; }
+  wrap.style.display = "";
+  const prev = (document.querySelector('input[name=mk-bootprio]:checked') || {}).value;
+  const sel = eligible.some(a => a.name === prev) ? prev : "";   // fall back to none
+  const opts = [{name: "", label: "none (leave disk's own)"}]
+    .concat(eligible.map(a => ({name: a.name, label: a.name + " (" + a.bootfiles.join("/") + ")"})));
+  el.innerHTML = opts.map(o => `
+    <label style="display:inline; font-size:0.85rem;">
+      <input type="radio" name="mk-bootprio" value="${o.name}" style="width:auto;"
+        ${o.name === sel ? "checked" : ""}> ${o.label}
+    </label>`).join("");
+}
+
+async function loadProjects() {
+  const r = await fetch("/api/list_projects");
+  const j = await r.json();
+  PROJECTS = j.projects || [];
+  document.getElementById("mk-proj").innerHTML = '<option value="">— select project —</option>' +
+    PROJECTS.map(p => `<option value="${esc(p.testlist)}">${esc(p.name)}</option>`).join("");
+  if (MEDIA.length) renderMedia();   // export selects need the project list
+}
+
+// ── Media library ───────────────────────────────────────────────────────────
+// Whole images the user drops into /testsrc/images over SMB. The files are the
+// source of truth; we only index them and hang annotation off the relative path.
+
+async function loadMedia() {
+  const r = await fetch("/api/list_media");
+  const j = await r.json();
+  if (j.status !== "ok") { document.getElementById("ml-list").innerHTML =
+    `<span style="color:#b02a1a;">${esc(j.message)}</span>`; return; }
+  MEDIA = j.media || [];
+  if (j.root) document.getElementById("ml-root").textContent = j.root;
+  renderMedia();
+}
+
+async function scanMedia() {
+  status("Scanning media library…", true);
+  const j = await postJSON("/api/scan_media", {});
+  status(j.message, j.status === "ok");
+  loadMedia();
+}
+
+function projectOptions() {
+  return '<option value="">— select project —</option>' +
+    PROJECTS.map(p => `<option value="${esc(p.testlist)}">${esc(p.name)}</option>`).join("");
+}
+
+function renderMedia() {
+  const el = document.getElementById("ml-list");
+  const filter = document.getElementById("ml-filter").value;
+  const items = filter ? MEDIA.filter(m => m.kind === filter) : MEDIA;
+  // Re-render replaces the list wholesale, which would snap shut the item the
+  // user is annotating — remember what was expanded and reopen it afterwards.
+  const wasOpen = new Set(Array.from(document.querySelectorAll("#ml-list details.item[open]"))
+    .map(d => d.dataset.mid));
+  if (!MEDIA.length) {
+    el.innerHTML = `<em style="color:#999;">nothing indexed yet — copy images into
+      <code>${esc(document.getElementById("ml-root").textContent)}</code> and hit Rescan</em>`;
+    return;
+  }
+  if (!items.length) { el.innerHTML = '<em style="color:#999;">no items of that kind</em>'; return; }
+  el.innerHTML = items.map(m => `
+    <div class="art-card ${m.missing ? 'missing' : ''}">
+      <div class="row">
+        <span class="name">${m.missing ? '<span class="xmark" title="file not found on disk">✕</span>' : ''}${esc(m.shortname || m.filename)}</span>
+        <span style="display:flex; gap:6px; align-items:center;">
+          <span class="pill ${m.kind}">${esc(m.kind)}</span>
+          <span class="pill ${m.missing ? 'gone' : ''}">${m.missing ? '✕ file missing' : fmtSize(m.size_bytes)}</span>
+        </span>
+      </div>
+      <div class="meta">${esc(m.rel_path)}${m.shortname ? '' : '  ·  no nickname yet'}</div>
+      <details class="item" data-mid="${m.id}" ${wasOpen.has(String(m.id)) ? "open" : ""}>
+        <summary><span class="snip">${m.description ? esc(snippet(m.description, 80)) : "no description — click to add one"}</span></summary>
+        <div class="item-body">
+          <div class="long ${m.description ? '' : 'empty'}">${m.description ? esc(m.description) : "Nothing recorded yet about what this image is."}</div>
+          <div class="fields">
+            <label style="flex:1;">Shortname / nickname
+              <input id="ml-sn-${m.id}" value="${esc(m.shortname || '')}" placeholder="${esc(m.filename)}">
+            </label>
+            <label style="flex:0 0 130px;">Kind
+              <select id="ml-kind-${m.id}">
+                <option value="" ${m.kind_override ? '' : 'selected'}>auto (${esc(m.kind)})</option>
+                <option value="floppy" ${m.kind_override === 'floppy' ? 'selected' : ''}>floppy</option>
+                <option value="iso" ${m.kind_override === 'iso' ? 'selected' : ''}>iso</option>
+                <option value="hdd" ${m.kind_override === 'hdd' ? 'selected' : ''}>hdd</option>
+              </select>
+            </label>
+          </div>
+          <label>Long description — what is this image?
+            <textarea id="ml-desc-${m.id}" rows="3"
+              placeholder="e.g. Windows 3.1 install CD, 6 disks slipstreamed, boots to setup">${esc(m.description || '')}</textarea>
+          </label>
+          <button class="db capture" style="margin-top:8px;" onclick="saveMedia(${m.id})">Save details</button>
+          ${m.missing ? `<div class="note err"><b>File not found</b> at <code>${esc(m.abs_path)}</code>.
+            It was indexed before but isn't on disk now. Your notes are kept — copy the image back
+            into the library and it clears itself on the next refresh.
+            <div style="margin-top:8px;">
+              <button class="db remove" onclick="forgetMedia(${m.id})">Forget this item</button>
+              <span style="color:#b02a1a; font-size:0.72rem; margin-left:6px;">drops the entry and its notes for good</span>
+            </div>
+          </div>` : renderMediaUse(m)}
+        </div>
+      </details>
+    </div>`).join("");
+}
+
+// A floppy is copied per project (a test writes to it); an ISO or hard disk is
+// referenced where it sits — they're big and read-only.
+function renderMediaUse(m) {
+  if (m.kind === "floppy") {
+    return `
+      <div style="margin-top:12px; border-top:1px dashed #ddd; padding-top:10px;">
+        <div style="font-size:0.82rem; color:#777; margin-bottom:4px;">Export a copy into a project:</div>
+        <div class="fields">
+          <label style="flex:2;">Project
+            <select id="ml-proj-${m.id}">${projectOptions()}</select>
+          </label>
+          <label style="flex:1;">Save as
+            <input id="ml-name-${m.id}" value="${esc(m.filename)}" placeholder="newfloppy.img">
+          </label>
+        </div>
+        <div style="margin-top:8px; display:flex; gap:14px; align-items:center;">
+          <label style="display:inline;"><input type="checkbox" id="ml-ow-${m.id}" style="width:auto;">
+            overwrite if it already exists</label>
+          <button class="db inject" onclick="exportMedia(${m.id})">Export →</button>
+        </div>
+      </div>`;
+  }
+  return `
+    <div style="margin-top:12px; border-top:1px dashed #ddd; padding-top:10px;">
+      <div style="font-size:0.82rem; color:#777; margin-bottom:4px;">
+        Reference in place — point the testlist CONFIG at this path (no copy):</div>
+      <div class="path-ref" id="ml-path-${m.id}">${esc(m.abs_path)}</div>
+      <button class="db" style="background:#666; margin-top:8px;" onclick="copyPath(${m.id})">Copy path</button>
+      ${m.kind === "iso" ? `<div class="note">Shared read-only: several QEMU instances can mount this
+        same ISO at once as a cdrom, but nothing may write to it. If a test needs a writable copy,
+        make it a floppy or hard-disk image instead.</div>` : ''}
+    </div>`;
+}
+
+async function saveMedia(id) {
+  const j = await postJSON("/api/update_media", {
+    id,
+    shortname:   document.getElementById("ml-sn-" + id).value,
+    description: document.getElementById("ml-desc-" + id).value,
+    kind:        document.getElementById("ml-kind-" + id).value,
+  });
+  status(j.message, j.status === "ok");
+  if (j.status === "ok") loadMedia();
+}
+
+// Only offered on missing items, so this drops an index row and its notes — it
+// never deletes media off the library share.
+async function forgetMedia(id) {
+  const m = MEDIA.find(x => x.id === id) || {};
+  if (!confirm(`Forget "${m.shortname || m.filename || id}" and its description?\n\n`
+             + `This only removes the library entry — nothing is deleted from disk. `
+             + `If the file ever comes back, it gets indexed again as a new, unannotated item.`)) return;
+  const j = await postJSON("/api/forget_media", {id});
+  status(j.message, j.status === "ok");
+  loadMedia();
+}
+
+async function exportMedia(id) {
+  const proj = document.getElementById("ml-proj-" + id).value;
+  if (!proj) { status("Pick a project to export into.", false); return; }
+  status("Exporting…", true);
+  const j = await postJSON("/api/export_media", {
+    id,
+    testlist_path: proj,
+    dest_name: document.getElementById("ml-name-" + id).value.trim(),
+    overwrite: document.getElementById("ml-ow-" + id).checked,
+  });
+  status(j.message, j.status === "ok");
+  if (j.status === "ok") loadImages();
+}
+
+async function copyPath(id) {
+  const p = document.getElementById("ml-path-" + id).textContent;
+  try {
+    await navigator.clipboard.writeText(p);
+    status("Copied: " + p, true);
+  } catch (e) {
+    status("Copy failed — select it by hand:\n" + p, false);
+  }
+}
+
+async function createDisk() {
+  const media = document.getElementById("mk-media").value;
+  const body = {
+    testlist_path: document.getElementById("mk-proj").value,
+    disk_name: document.getElementById("mk-name").value.trim(),
+    media,
+    fat_bits: document.getElementById("mk-fat").value || null,
+    bootable: document.getElementById("mk-boot").checked,
+    make_src_dir: document.getElementById("mk-src").checked,
+    overwrite: document.getElementById("mk-ow").checked,
+  };
+  if (media === "floppy") body.size_kb = parseInt(document.getElementById("mk-size-kb").value, 10);
+  else body.size_mb = parseInt(document.getElementById("mk-size-mb").value, 10);
+
+  if (!body.testlist_path || !body.disk_name) {
+    status("Pick a project and enter a disk name.", false); return;
+  }
+  const artifacts = Array.from(document.querySelectorAll(".mk-art:checked")).map(c => c.value);
+  const bootPrio = (document.querySelector('input[name=mk-bootprio]:checked') || {}).value || "";
+  status("Creating disk " + body.disk_name + "…", true);
+  const j = await postJSON("/api/create_disk", body);
+  if (j.status !== "ok") { status(j.message, false); return; }
+
+  // Stuff the selected artifacts into the disk we just built. Only the chosen
+  // priority artifact applies its root CONFIG.SYS/AUTOEXEC.BAT to C:\.
+  let log = j.message;
+  for (const name of artifacts) {
+    status(log + "\nInjecting " + name + "…", true);
+    const ij = await postJSON("/api/inject_artifact",
+      {name, hdd_img_path: j.path, apply_bootfiles: (name === bootPrio)});
+    log += "\n" + ij.message;
+    if (ij.status !== "ok") { status(log, false); loadImages(); return; }
+  }
+  status(log, true);
+  loadImages(); loadProjects();
+}
+
+loadArtifacts();
+loadImages();
+loadProjects();
+loadMedia();
+mkMediaChange();
+</script>
+{% endblock %}

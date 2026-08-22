@@ -1,269 +1,1663 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
-    <style>
-        .spreadsheet { display: table; width: 100%; border-collapse: collapse; }
-        .row { display: table-row; border-bottom: 1px solid #eee; }
-        .cell { display: table-cell; padding: 6px; vertical-align: middle; }
-        .label-cell { width: 30%; font-weight: bold; color: #444; font-size: 0.85em; background: #fafafa; border-right: 1px solid #eee; }
-        
-        select, input, textarea { width: 100%; padding: 4px 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 3px; font-size: 0.9em; }
-        input[readonly], textarea[readonly] { background-color: #f9f9f9; color: #777; border-color: #ddd; font-family: monospace; font-size: 0.8em; }
-        
-        .section-head { background: #e9ecef; font-weight: bold; font-size: 0.8em; text-transform: uppercase; letter-spacing: 1px; }
-        
-        button { margin-top: 15px; padding: 10px; width: 100%; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; transition: background 0.2s; }
-        button:hover { background: #0056b3; }
-        
-        #status { margin-top: 10px; padding: 8px; border-radius: 4px; font-size: 0.85em; white-space: pre-wrap; display: none; }
-        
-        /* JSON display styling */
-        .json-display { height: 300px; white-space: pre; overflow-x: auto; }
-    </style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    <div id="main-content">
-        <h2>Clone Build Test</h2>
+:root {
+    --bg:        #ffffff;
+    --surface:   #f8f8f8;
+    --surface2:  #f0f0f0;
+    --border:    #d8d8d8;
+    --border2:   #c0c0c0;
+    --text:      #222222;
+    --text-dim:  #777777;
+    --text-head: #111111;
+    --accent:    #1a5fd4;
+    --ok:        #1a8a50;
+    --warn:      #b06a00;
+    --err:       #c0250e;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+    --radius:    4px;
+    --step-w:    700px;
+}
 
-        <div class="spreadsheet">
-            <div class="row section-head"><div class="cell" colspan="2">1. Source Selection</div></div>
-            
-            <div class="row">
-                <div class="cell label-cell">System Filter</div>
-                <div class="cell"><select id="system-filter"><option value="all">All Systems</option></select></div>
-            </div>
-            <div class="row">
-                <div class="cell label-cell">Source Test</div>
-                <div class="cell"><select id="sourcetestlist" onchange="updateFields()"></select></div>
-            </div>
-            <div class="row">
-                <div class="cell label-cell">Source Path</div>
-                <div class="cell"><input type="text" id="src_path_display" readonly></div>
-            </div>
+body { font-family: var(--sans); background: var(--bg); color: var(--text); }
 
-            <div class="row section-head"><div class="cell" colspan="2">2. Target Definition</div></div>
+#clone-wizard {
+    max-width: var(--step-w);
+    margin: 32px auto 80px;
+    padding: 0 16px;
+}
 
-            <div class="row">
-                <div class="cell label-cell">New Project ID/Dir</div>
-                <div class="cell"><input type="text" id="target_id" placeholder="New Folder Name"></div>
-            </div>
-            <div class="row">
-                <div class="cell label-cell">Target Type</div>
-                <div class="cell"><input type="text" id="target_type"></div>
-            </div>
-            <div class="row">
-                <div class="cell label-cell">Full Target Path</div>
-                <div class="cell"><input type="text" id="target_path"></div>
-            </div>
+h2 {
+    font-family: var(--mono);
+    font-size: 1.05em;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-head);
+    margin-bottom: 4px;
+}
+.page-sub { font-size: 0.8em; color: var(--text-dim); margin-bottom: 28px; }
 
-            <div class="row section-head"><div class="cell" colspan="2">3. Config Parameters</div></div>
-            
-            <div id="dynamic-config-container">
-                <div class="row"><div class="cell" colspan="2" style="text-align:center; color:#999;">Select a source test to load config</div></div>
-            </div>
+/* ── Step rail ── */
+.step-rail {
+    display: flex;
+    align-items: center;
+    margin-bottom: 28px;
+    font-family: var(--mono);
+}
+.step-pip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+    user-select: none;
+}
+.step-pip .dot {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 2px solid var(--border2);
+    background: var(--surface);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.68em; font-weight: 600; color: var(--text-dim);
+    transition: all 0.2s;
+}
+.step-pip .lbl {
+    font-size: 0.6em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    transition: color 0.2s;
+}
+.step-pip.active .dot  { border-color: var(--accent); background: var(--accent); color: #fff; }
+.step-pip.active .lbl  { color: var(--accent); }
+.step-pip.done   .dot  { border-color: var(--ok); background: var(--ok); color: #ffffff; }
+.step-pip.done   .lbl  { color: var(--ok); }
+.step-conn {
+    flex: 2;
+    height: 2px;
+    background: var(--border);
+    margin-bottom: 18px;
+    transition: background 0.3s;
+}
+.step-conn.done { background: var(--ok); }
 
-            <div class="row section-head"><div class="cell" colspan="2">4. Structure & Steps (Reference)</div></div>
-            <div class="row">
-                <div class="cell" colspan="2">
-                    <textarea id="structure-display" class="json-display" readonly></textarea>
-                </div>
+/* ── Card ── */
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 24px;
+}
+.card-title {
+    font-family: var(--mono);
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--accent);
+    margin-bottom: 4px;
+}
+.card-desc {
+    font-size: 0.82em;
+    color: var(--text-dim);
+    margin-bottom: 20px;
+    line-height: 1.55;
+}
+
+/* ── Fields ── */
+.field { margin-bottom: 14px; }
+.field label {
+    display: block;
+    font-size: 0.72em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+}
+.field .hint {
+    font-size: 0.7em;
+    color: var(--text-dim);
+    margin-top: 4px;
+    font-family: var(--mono);
+    line-height: 1.4;
+}
+.field input, .field select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text-head);
+    font-family: var(--mono);
+    font-size: 0.86em;
+    padding: 9px 12px;
+    outline: none;
+    transition: border-color 0.15s, background 0.15s;
+    -webkit-appearance: none;
+    appearance: none;
+}
+.field input:focus, .field select:focus { border-color: var(--accent); }
+.field input.f-ok   { border-color: var(--ok);   background: #f0faf4; }
+.field input.f-warn { border-color: var(--warn);  background: #fdf8ee; }
+.field input.f-err  { border-color: var(--err);   background: #fdf2f0; }
+.field input[readonly] {
+    background: var(--bg);
+    color: var(--text-dim);
+    cursor: default;
+}
+.field select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b7599'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 32px;
+    cursor: pointer;
+}
+.field-row { display: flex; gap: 12px; }
+.field-row .field { flex: 1; }
+
+/* ── Mode cards ── */
+.mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 4px; }
+.mode-card {
+    background: var(--surface2);
+    border: 2px solid var(--border2);
+    border-radius: 6px;
+    padding: 18px 16px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+.mode-card:hover { border-color: var(--accent); background: #edf3fc; }
+.mode-card.selected { border-color: var(--accent); background: #e4edfa; }
+.mode-card .mc-icon { font-size: 1.3em; margin-bottom: 8px; }
+.mode-card .mc-title {
+    font-family: var(--mono);
+    font-size: 0.82em;
+    font-weight: 600;
+    color: var(--text-head);
+    margin-bottom: 4px;
+}
+.mode-card .mc-desc { font-size: 0.74em; color: var(--text-dim); line-height: 1.45; }
+.mode-card.selected .mc-title { color: var(--accent); }
+
+/* ── Val/check panel ── */
+.check-panel {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.78em;
+    font-family: var(--mono);
+    line-height: 1.4;
+}
+.check-row:last-child { border-bottom: none; }
+.check-row .ci { flex-shrink: 0; margin-top: 1px; }
+.check-row.c-ok   .ci { color: var(--ok); }
+.check-row.c-warn .ci { color: var(--warn); }
+.check-row.c-err  .ci { color: var(--err); }
+.check-row .ck { color: var(--text-dim); width: 150px; flex-shrink: 0; }
+.check-row .cv { color: var(--text-head); word-break: break-all; flex: 1; }
+
+/* ── Section sub-heading ── */
+.sub-head {
+    font-family: var(--mono);
+    font-size: 0.66em;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin: 18px 0 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* ── Mirror / hardcoded fix section ── */
+.fix-section {
+    background: #fdf9ee;
+    border: 1px solid #e8c96a;
+    border-radius: 5px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+}
+.fix-section-title {
+    font-family: var(--mono);
+    font-size: 0.68em;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--warn);
+    margin-bottom: 10px;
+}
+
+/* ── Signature check panel ── */
+.sig-panel {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.sig-step-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.72em;
+}
+.sig-step-head .sh-idx  { color: var(--text-dim); min-width: 24px; }
+.sig-step-head .sh-name { color: var(--text-head); font-weight: 600; flex: 1; }
+.sig-step-head .sh-ok   { color: var(--ok);  font-size: 0.9em; }
+.sig-step-head .sh-err  { color: var(--err); font-size: 0.9em; }
+.sig-step-head .sh-skip { color: var(--text-dim); font-size: 0.9em; }
+.sig-issue-row {
+    display: grid;
+    grid-template-columns: 16px 140px 1fr;
+    grid-template-rows: auto auto;
+    align-items: baseline;
+    gap: 0 10px;
+    padding: 6px 12px 6px 36px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.75em;
+    background: #fdf2f0;
+}
+.sig-issue-row:last-child { border-bottom: none; }
+.sig-issue-row .si-icon { color: var(--err); }
+.sig-issue-row .si-key  { color: var(--err); word-break: break-all; }
+.sig-issue-row .si-msg  { color: var(--text-dim); }
+.sig-val-detail {
+    grid-column: 2 / -1;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 0 1px;
+    font-size: 0.9em;
+    flex-wrap: wrap;
+}
+.svd-raw   { color: var(--err); text-decoration: line-through; opacity: 0.8; word-break: break-all; }
+.svd-arrow { color: var(--text-dim); flex-shrink: 0; }
+.svd-res   { color: var(--text-head); word-break: break-all; }
+.sig-loading {
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 0.78em;
+    color: var(--text-dim);
+}
+
+/* ── Step param fix controls ── */
+.sig-fix-row {
+    grid-column: 2 / -1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0 2px;
+    flex-wrap: wrap;
+}
+.sig-fix-row .sf-label {
+    color: var(--text-dim);
+    font-size: 0.9em;
+    flex-shrink: 0;
+}
+.sig-fix-row select, .sig-fix-row input[type="text"] {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    padding: 4px 8px;
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text-head);
+    outline: none;
+}
+.sig-fix-row select:focus, .sig-fix-row input[type="text"]:focus { border-color: var(--accent); }
+.sig-fix-row input[type="text"] { flex: 1; min-width: 180px; }
+
+.step-fixes-panel {
+    margin-top: 10px;
+    border: 1px solid var(--ok);
+    border-radius: var(--radius);
+    background: #f0faf4;
+    overflow: hidden;
+}
+.step-fixes-title {
+    font-family: var(--mono);
+    font-size: 0.66em;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--ok);
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--ok);
+}
+.step-fix-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 12px;
+    font-family: var(--mono);
+    font-size: 0.78em;
+    color: var(--text-head);
+    border-bottom: 1px solid var(--border);
+}
+.step-fix-row:last-child { border-bottom: none; }
+.step-fix-row .sf-step { color: var(--text-dim); flex-shrink: 0; }
+.step-fix-row .sf-auto {
+    display: inline-block;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    padding: 0 4px;
+    margin-left: 4px;
+}
+.step-fix-row .sf-undo {
+    margin-left: auto;
+    color: var(--err);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.step-fix-row .sf-undo:hover { text-decoration: underline; }
+
+/* ── Diff table ── */
+.diff-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.diff-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 0.76em; }
+.diff-table th {
+    background: var(--surface2);
+    color: var(--text-dim);
+    text-align: left;
+    padding: 7px 10px;
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid var(--border);
+}
+.diff-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    word-break: break-all;
+}
+.diff-table tr:last-child td { border-bottom: none; }
+.diff-table .dk { color: var(--text-dim); width: 150px; flex-shrink: 0; }
+.diff-table .ds { color: var(--text-dim); }                       /* source — unchanged */
+.diff-table .dd { color: var(--text-dim); font-style: italic; }   /* derived template */
+.diff-table .dr-old { color: var(--err);  text-decoration: line-through; opacity: 0.8; }
+.diff-table .dr-new { color: var(--ok); }
+.diff-table tr.tr-changed { background: #f2fbf6; }
+.diff-table tr.tr-warn    { background: #fdf9ee; }
+.diff-table tr.tr-err     { background: #fdf2f0; }
+
+/* ── Nav ── */
+.nav-row { display: flex; gap: 10px; margin-top: 22px; align-items: center; }
+.spacer { flex: 1; }
+.btn {
+    padding: 9px 20px;
+    border-radius: var(--radius);
+    border: none;
+    font-family: var(--mono);
+    font-size: 0.8em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.5px;
+}
+.btn-primary  { background: var(--accent); color: #fff; }
+.btn-primary:hover  { background: #3a7be8; }
+.btn-primary:disabled { background: var(--border2); color: var(--text-dim); cursor: not-allowed; }
+.btn-ghost    { background: transparent; color: var(--text-dim); border: 1px solid var(--border2); }
+.btn-ghost:hover    { color: var(--text); border-color: var(--text-dim); }
+.btn-execute  { background: var(--ok); color: #ffffff; font-weight: 700; }
+.btn-execute:hover  { background: #2db87a; }
+.btn-execute:disabled { background: var(--border2); color: var(--text-dim); cursor: not-allowed; }
+
+/* ── Status ── */
+.status-box {
+    margin-top: 16px;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    font-size: 0.8em;
+    font-family: var(--mono);
+    white-space: pre-wrap;
+    line-height: 1.5;
+    display: none;
+}
+.status-box.s-ok   { background: #f0faf4; border: 1px solid var(--ok);   color: var(--ok);   display: block; }
+.status-box.s-err  { background: #fdf2f0; border: 1px solid var(--err);  color: var(--err);  display: block; }
+.status-box.s-info { background: #edf3fc; border: 1px solid var(--accent); color: var(--accent); display: block; }
+
+/* ── Badge ── */
+.badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.65em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-left: 5px;
+    vertical-align: middle;
+    font-weight: 500;
+}
+.b-warn { background: #fdf4d8; color: var(--warn); border: 1px solid #d4a830; }
+.b-ok   { background: #e8f7ee; color: var(--ok);   border: 1px solid #7acca0; }
+.b-key  { background: #e8eef9; color: var(--accent); border: 1px solid #8aaae0; }
+
+hr.div { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+.hidden { display: none !important; }
+</style>
+
+<div id="clone-wizard">
+    <h2>Clone Test</h2>
+    <p class="page-sub">Step through source selection, mode, identity, validation, and review before writing anything to disk.</p>
+
+    <!-- ── Rail ── -->
+    <div class="step-rail">
+        <div class="step-pip active" id="pip-1"><div class="dot">1</div><div class="lbl">Source</div></div>
+        <div class="step-conn" id="cn-1"></div>
+        <div class="step-pip" id="pip-2"><div class="dot">2</div><div class="lbl">Mode</div></div>
+        <div class="step-conn" id="cn-2"></div>
+        <div class="step-pip" id="pip-3"><div class="dot">3</div><div class="lbl">Identity</div></div>
+        <div class="step-conn" id="cn-3"></div>
+        <div class="step-pip" id="pip-4"><div class="dot">4</div><div class="lbl">Validate</div></div>
+        <div class="step-conn" id="cn-4"></div>
+        <div class="step-pip" id="pip-5"><div class="dot">5</div><div class="lbl">Review</div></div>
+    </div>
+
+    <!-- ══ STEP 1 ══ -->
+    <div id="s1" class="card">
+        <div class="card-title">Step 1 — Pick Source</div>
+        <div class="card-desc">Choose the test to clone. Its CONFIG is loaded as the starting point.</div>
+
+        <div class="field-row">
+            <div class="field" style="flex:0 0 180px">
+                <label>System filter</label>
+                <select id="sys-filter"><option value="all">All Systems</option></select>
+            </div>
+            <div class="field">
+                <label>Source test</label>
+                <select id="src-select"><option value="">— select —</option></select>
             </div>
         </div>
 
-        <button onclick="cloneProject()">Execute Clone Operation</button>
-        <div id="status"></div>
+        <div id="s1-loaded" class="hidden">
+            <div class="field">
+                <label>Source path (projbasedir + projdir)</label>
+                <input type="text" id="src-path-display" readonly>
+            </div>
+            <div id="s1-issues" class="check-panel hidden" style="margin-top:2px;"></div>
+
+            <div id="s1-sig-wrap" class="hidden" style="margin-top:12px;">
+                <div class="sub-head" style="margin-top:0">Step param check — source file</div>
+                <div id="s1-sig-panel" class="sig-panel">
+                    <div class="sig-loading">Checking step params…</div>
+                </div>
+                <div id="s1-sig-warn" class="status-box s-err hidden" style="margin-top:8px;"></div>
+            </div>
+        </div>
+
+        <div class="nav-row">
+            <div class="spacer"></div>
+            <button class="btn btn-primary" id="btn1-next" disabled onclick="advance(2)">Next →</button>
+        </div>
     </div>
 
-    <script>
-let allTestData = [];
-let currentRawConfig = {}; // Stores the raw config object
+    <!-- ══ STEP 2 ══ -->
+    <div id="s2" class="card hidden">
+        <div class="card-title">Step 2 — Clone Mode</div>
+        <div class="card-desc">Choose how the cloned test relates to the source.</div>
 
+        <div class="mode-grid">
+            <div class="mode-card" id="mc-variant" onclick="pickMode('variant')">
+                <div class="mc-icon">📋</div>
+                <div class="mc-title">New Variant</div>
+                <div class="mc-desc">Same folder, different role.<br>
+                    e.g. add a <em>run</em> test alongside an existing <em>build</em>.</div>
+            </div>
+            <div class="mode-card" id="mc-new" onclick="pickMode('new')">
+                <div class="mc-icon">📁</div>
+                <div class="mc-title">New Test + Folder</div>
+                <div class="mc-desc">New folder slug on disk.<br>
+                    Use when cloning to a different project.</div>
+            </div>
+        </div>
+
+        <div class="nav-row">
+            <button class="btn btn-ghost" onclick="advance(1)">← Back</button>
+            <div class="spacer"></div>
+            <button class="btn btn-primary" id="btn2-next" disabled onclick="advance(3)">Next →</button>
+        </div>
+    </div>
+
+    <!-- ══ STEP 3 ══ -->
+    <div id="s3" class="card hidden">
+        <div class="card-title">Step 3 — Identity</div>
+        <div class="card-desc" id="s3-desc"></div>
+
+        <!-- New-folder only -->
+        <div id="s3-new" class="hidden">
+            <div class="field">
+                <label>Suite Name <span class="badge b-key">testname</span></label>
+                <input type="text" id="f-testname" oninput="s3Changed()" placeholder="Human label shown in the runner">
+            </div>
+            <div class="field">
+                <label>Suite Folder <span class="badge b-warn">projdir</span></label>
+                <input type="text" id="f-projdir" oninput="s3Changed()" placeholder="Folder slug — no spaces or slashes">
+                <div class="hint">Drives all derived paths. Keep short and lowercase.</div>
+            </div>
+            <div class="field">
+                <label>Base Dir <span class="badge b-key">projbasedir</span></label>
+                <input type="text" id="f-projbasedir" oninput="s3Changed()">
+                <div class="hint">Trailing slash required.</div>
+            </div>
+        </div>
+
+        <!-- Variant only -->
+        <div id="s3-variant" class="hidden">
+            <div class="field-row">
+                <div class="field">
+                    <label>Suite Name</label>
+                    <input type="text" id="f-testname-v" readonly>
+                </div>
+                <div class="field">
+                    <label>Suite Folder</label>
+                    <input type="text" id="f-projdir-v" readonly>
+                </div>
+            </div>
+            <div class="hint" style="margin-bottom:14px; color:var(--text-dim)">
+                Folder and name are inherited from source. Only the test role changes.
+            </div>
+        </div>
+
+        <div class="field">
+            <label>Test Role <span class="badge b-warn">testtype</span></label>
+            <input type="text" id="f-testtype" oninput="s3Changed()" placeholder="e.g. build, run, atest, btest">
+            <div class="hint">Each role gets its own Run button in the test runner.</div>
+        </div>
+
+        <hr class="div">
+
+        <div class="field">
+            <label>Output filename <span class="badge b-ok">__testlist__{suffix}.py</span></label>
+            <input type="text" id="f-suffix" oninput="s3Changed()">
+            <div class="hint" id="fname-preview" style="color:var(--text-head)"></div>
+        </div>
+
+        <div class="nav-row">
+            <button class="btn btn-ghost" onclick="advance(2)">← Back</button>
+            <div class="spacer"></div>
+            <button class="btn btn-primary" id="btn3-next" disabled onclick="advance(4)">Next →</button>
+        </div>
+    </div>
+
+    <!-- ══ STEP 4 ══ -->
+    <div id="s4" class="card hidden">
+        <div class="card-title">Step 4 — Validate &amp; Fix</div>
+        <div class="card-desc">
+            Problems inherited from the source config are surfaced here.
+            Fix them before continuing — the Review step will show exactly what gets written.
+        </div>
+
+        <!-- Mirror keys -->
+        <div id="s4-mirror" class="fix-section hidden">
+            <div class="fix-section-title">⚠ Scalar values containing the old folder name</div>
+            <div class="hint" style="margin-bottom:12px;">
+                These are not template paths — they hardcode the source folder slug.
+                Suggested replacements are pre-filled; edit if needed.
+            </div>
+            <div id="s4-mirror-fields"></div>
+        </div>
+
+        <!-- Hardcoded absolute paths (not mirror) -->
+        <div id="s4-hard" class="fix-section hidden" style="border-color:#dbc86a;">
+            <div class="fix-section-title">⚠ Hardcoded absolute paths</div>
+            <div class="hint" style="margin-bottom:12px;">
+                These values contain absolute paths that aren't driven by <code>{tokens}</code>.
+                They may still point to the source project. Edit as needed.
+            </div>
+            <div id="s4-hard-fields"></div>
+        </div>
+
+        <!-- Template resolution live preview -->
+        <div class="sub-head">Template paths — live resolution</div>
+        <div id="s4-derived" class="check-panel"></div>
+
+        <!-- Step param signature check -->
+        <div class="sub-head">Step param check — dispatch function signatures</div>
+        <div id="s4-step-fixes" class="hidden"></div>
+        <div id="s4-sig-panel" class="sig-panel">
+            <div class="sig-loading">Waiting…</div>
+        </div>
+
+        <!-- Overall error gate -->
+        <div id="s4-err-gate" class="status-box s-err hidden"></div>
+
+        <div class="nav-row">
+            <button class="btn btn-ghost" onclick="advance(3)">← Back</button>
+            <div class="spacer"></div>
+            <button class="btn btn-primary" id="btn4-next" onclick="advance(5)">Review →</button>
+        </div>
+    </div>
+
+    <!-- ══ STEP 5 ══ -->
+    <div id="s5" class="card hidden">
+        <div class="card-title">Step 5 — Review &amp; Execute</div>
+        <div class="card-desc">
+            Full diff of what will be written to disk.
+            <span style="color:var(--ok)">Green</span> = changed/new.
+            <span style="color:var(--text-dim)">Grey</span> = unchanged.
+            <span style="color:var(--warn)">Yellow row</span> = unresolved token remains.
+        </div>
+
+        <div class="field-row" style="margin-bottom:16px;">
+            <div class="field">
+                <label>Destination folder</label>
+                <input type="text" id="rev-dest" readonly>
+            </div>
+            <div class="field">
+                <label>Output file</label>
+                <input type="text" id="rev-file" readonly>
+            </div>
+        </div>
+
+        <div class="diff-wrap">
+            <table class="diff-table">
+                <thead>
+                    <tr>
+                        <th style="width:150px">Key</th>
+                        <th>Source value</th>
+                        <th>Clone value</th>
+                    </tr>
+                </thead>
+                <tbody id="diff-body"></tbody>
+            </table>
+        </div>
+
+        <div class="nav-row">
+            <button class="btn btn-ghost" onclick="advance(3)">← Edit</button>
+            <div class="spacer"></div>
+            <button class="btn btn-execute" id="btn-execute" onclick="doClone()">▶ Execute Clone</button>
+        </div>
+
+        <div id="clone-status" class="status-box"></div>
+    </div>
+
+</div><!-- /clone-wizard -->
+
+<script>
+'use strict';
+
+// ─── State ───────────────────────────────────────────────────────
+let allTests     = [];
+let rawConfig    = {};
+let srcModule    = '';
+let cloneMode    = '';       // 'variant' | 'new'
+let currentStep  = 1;
+let _autoSuffix  = '';       // last auto-generated suffix (to detect user override)
+let _sigErrors   = false;   // set by sig check; gates "Review →"
+
+// Step param fixes — keyed by step_index, applied to a clone of rawConfig.steps
+// before validation/clone. Cleared whenever a new source is loaded.
+let _stepParamFixes  = {};  // { [stepIndex]: { [oldKey]: newKey | '' (remove) } }
+let _stepValueFixes  = {};  // { [stepIndex]: { [key]: newValue } }
+let _stepActionFixes = {};  // { [stepIndex]: newActionName }
+
+// Tracks which (stepIndex,oldKey) entries in _stepParamFixes were applied
+// automatically via KNOWN_STEP_PARAM_FIXES, vs picked manually — purely
+// for the "(auto)" badge in the pending-fixes panel.
+let _autoFixedParams    = new Set();  // "stepIndex:oldKey"
+// Entries the user explicitly undid from an auto-fix — suppresses
+// re-applying that auto-fix on the next check.
+let _suppressedAutoFixes = new Set(); // "stepIndex:oldKey"
+
+const SKIP_KEYS  = new Set(['testname','projdir','testtype','projbasedir','structure','steps']);
+const TOKEN_RE   = /\{[^}]+\}/;
+const ABS_RE     = /^\/[a-zA-Z]/;
+
+// ─── Known legacy → current dispatch-arg renames ──────────────────
+// When the dispatch signature check flags an `unknown_param` and the
+// step's action + old param name match an entry here, the rename (or
+// removal, for `null`) is applied automatically — no manual fix needed
+// in Step 4. This is how old testlists carrying outdated arg names
+// (from before a dispatch function's signature changed) get repaired
+// on every future clone, instead of needing per-file manual edits.
+//
+// Add new entries here as more "the function's args got renamed but old
+// testlists/clones still use the old names" cases turn up.
+const KNOWN_STEP_PARAM_FIXES = {
+    test_compiletheprogram: {
+        d64_drive8_file: 'd64_path',  // old: explicit drive8 image path -> current: d64_path
+        d64_file:        null,        // old: unused/duplicate disk-image arg -> drop
+    },
+};
+
+// ─── Step navigation ─────────────────────────────────────────────
+function advance(n) {
+    if (n === 3) prepStep3();
+    if (n === 4) prepStep4();
+    if (n === 5) prepStep5();
+
+    document.getElementById(`s${currentStep}`).classList.add('hidden');
+    currentStep = n;
+    document.getElementById(`s${n}`).classList.remove('hidden');
+    railUpdate();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function railUpdate() {
+    for (let i = 1; i <= 5; i++) {
+        const pip  = document.getElementById(`pip-${i}`);
+        const conn = document.getElementById(`cn-${i}`);
+        pip.className = 'step-pip' +
+            (i < currentStep ? ' done' : i === currentStep ? ' active' : '');
+        if (conn) conn.className = 'step-conn' + (i < currentStep ? ' done' : '');
+    }
+}
+
+// ─── Step 1: source selection ─────────────────────────────────────
 function loadTests() {
-    fetch('/testfile_list')
+    fetch('/api/v1/tests')
         .then(r => r.json())
-        .then(data => {
-            allTestData = data;
-            const systemFilter = document.getElementById('system-filter');
-            const systemsSet = new Set();
-            data.forEach(item => { if (item.system) systemsSet.add(item.system); });
-            Array.from(systemsSet).sort().forEach(sys => {
-                const opt = document.createElement('option');
-                opt.value = sys; opt.textContent = sys;
-                systemFilter.appendChild(opt);
+        .then(resp => {
+            const data = resp.data.tests.map(t => ({
+                id: t.display_name, display_name: t.display_name, module: t.module,
+                types: t.types, system: t.system, platform: t.platform,
+                latest_status: t.latest_status
+            }));
+            allTests = data;
+            const sf = document.getElementById('sys-filter');
+            const systems = [...new Set(data.map(d => d.system).filter(Boolean))].sort();
+            systems.forEach(s => {
+                const o = document.createElement('option');
+                o.value = o.textContent = s;
+                sf.appendChild(o);
             });
-            renderTests('all');
+            renderList('all');
         });
 }
 
-function renderTests(filter) {
-    const sel = document.getElementById('sourcetestlist');
-    sel.innerHTML = '<option value="">-- Select Source Test --</option>';
-    let filtered = filter === 'all' ? allTestData : allTestData.filter(item => item.system === filter);
-    filtered.sort((a, b) => (a.id || "").localeCompare(b.id || ""));
-    filtered.forEach(item => {
-        const opt = document.createElement('option');
-        opt.value = item.module;
-        opt.dataset.id = item.id;
-        opt.dataset.primaryType = (item.types && Object.keys(item.types)[0]) || 'build';
-        opt.textContent = `${item.id} [${Object.keys(item.types || {}).join(', ')}]`;
-        sel.appendChild(opt);
+document.getElementById('sys-filter').addEventListener('change', e => renderList(e.target.value));
+document.getElementById('src-select').addEventListener('change', onSrcSelected);
+
+function renderList(filter) {
+    const sel  = document.getElementById('src-select');
+    sel.innerHTML = '<option value="">— select —</option>';
+    const list = (filter === 'all' ? allTests : allTests.filter(d => d.system === filter))
+        .slice().sort((a, b) => (a.id||'').localeCompare(b.id||''));
+    list.forEach(item => {
+        const o = document.createElement('option');
+        o.value = item.module;
+        o.textContent = `${item.id}  [${Object.keys(item.types||{}).join(', ')}]`;
+        sel.appendChild(o);
     });
 }
 
-document.getElementById('system-filter').addEventListener('change', function() { renderTests(this.value); });
+function onSrcSelected() {
+    const mod = document.getElementById('src-select').value;
+    if (!mod) { document.getElementById('s1-loaded').classList.add('hidden'); return; }
+    srcModule = mod;
 
-function updateFields() {
-    const sel = document.getElementById('sourcetestlist');
-    const selected = sel.options[sel.selectedIndex];
-    if (!selected.value) return;
-
-    // Set Base Target Info
-    document.getElementById('target_type').value = selected.dataset.primaryType;
-    const newId = selected.dataset.id + '_copy';
-    document.getElementById('target_id').value = newId;
-
-    fetch(`/module_path?src_module=${encodeURIComponent(selected.value)}`)
+    fetch(`/api/v1/tests/${encodeURIComponent(mod)}`)
         .then(r => r.json())
         .then(res => {
-            if (res.status === 'success' && res.config) {
-                // Populate Static Source Info
-                const paths = res.config.paths || {}; // Handle if paths are inside or part of config
-                document.getElementById('src_path_display').value = paths.src || res.config.projbasedir || '';
-
-                buildConfigEditor(res.config);
-                updateTargetPath();
-            }
-        });
+            if (!res.data) { showS1Err(res.error && res.error.message); return; }
+            rawConfig = res.data.config;
+            _stepParamFixes  = {};
+            _stepValueFixes  = {};
+            _stepActionFixes = {};
+            _autoFixedParams     = new Set();
+            _suppressedAutoFixes = new Set();
+            document.getElementById('src-path-display').value =
+                (rawConfig.projbasedir || '') + (rawConfig.projdir || '');
+            document.getElementById('s1-loaded').classList.remove('hidden');
+            showS1Issues();
+            document.getElementById('btn1-next').disabled = false;
+            s1SigCheck();
+        })
+        .catch(e => showS1Err(String(e)));
 }
 
-/**
- * Iterates over the config object.
- * Scalar values -> Editable Input Rows.
- * Structure/Steps -> Read-only JSON block.
- */
-function buildConfigEditor(config) {
-    currentRawConfig = config;
-    const container = document.getElementById('dynamic-config-container');
-    container.innerHTML = ''; // Clear previous
+function showS1Issues() {
+    // Surface issues IN THE SOURCE that will need fixing
+    const issues = [];
+    const cfg = rawConfig;
+    const pd  = cfg.projdir || '';
 
-    const structureObj = {};
-    
-    // Sort keys to keep UI consistent
-    const keys = Object.keys(config).sort();
-
-    keys.forEach(key => {
-        const val = config[key];
-
-        // 1. Filter Complex Objects to JSON view
-        if (key === 'structure' || key === 'steps' || key === 'paths') {
-            structureObj[key] = val;
-            return; 
+    Object.entries(cfg).forEach(([k, v]) => {
+        if (SKIP_KEYS.has(k) || typeof v !== 'string' || !v) return;
+        if (TOKEN_RE.test(v)) {
+            const resolved = resolveStr(v, cfg);
+            if (TOKEN_RE.test(resolved))
+                issues.push({ level:'warn', key:k, msg:`Unresolved token after expansion: ${v}` });
+            // detect doubled path segments (typo like /sourcedi{projbasedir})
+            if (/\/{2,}|([/\w]+)\1/.test(resolved))
+                issues.push({ level:'warn', key:k, msg:`Possible doubled segment in resolved path` });
+        } else if (ABS_RE.test(v) && pd && v.includes(pd)) {
+            issues.push({ level:'warn', key:k, msg:`Hardcoded absolute path contains folder name — will need updating on clone` });
         }
-
-        // 2. Filter internal keys (optional)
-        if (key.startsWith('_')) return;
-
-        // 3. Create Editable Row
-        const row = document.createElement('div');
-        row.className = 'row';
-
-        const label = document.createElement('div');
-        label.className = 'cell label-cell';
-        label.textContent = key;
-
-        const valCell = document.createElement('div');
-        valCell.className = 'cell';
-
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'dynamic-conf-input'; // Marker class for collection
-        input.dataset.key = key; // Store the key name
-        
-        // Handle value types for display
-        if (typeof val === 'object' && val !== null) {
-            input.value = JSON.stringify(val);
-        } else {
-            input.value = val === undefined ? '' : val;
-        }
-
-        // Special listener: if user changes projbasedir, update target path
-        if (key === 'projbasedir') {
-            input.id = 'dynamic_projbasedir';
-            input.addEventListener('input', updateTargetPath);
-        }
-
-        // Special listener: if user changes projdir, sync it with target_id? 
-        // (Optional: depending on logic, usually target_id overrides projdir)
-        
-        valCell.appendChild(input);
-        row.appendChild(label);
-        row.appendChild(valCell);
-        container.appendChild(row);
     });
 
-    // Populate the Structure/Steps display
-    document.getElementById('structure-display').value = JSON.stringify(structureObj, null, 4);
+    const panel = document.getElementById('s1-issues');
+    if (issues.length === 0) { panel.classList.add('hidden'); return; }
+    panel.classList.remove('hidden');
+    panel.innerHTML = issues.map(iss =>
+        `<div class="check-row c-${iss.level}">
+            <span class="ci">${icon(iss.level)}</span>
+            <span class="ck">${esc(iss.key)}</span>
+            <span class="cv">${esc(iss.msg)}</span>
+        </div>`).join('');
 }
 
-// Updates the Full Target Path based on the (potentially edited) Base Dir + Target ID
-function updateTargetPath() {
-    const baseDirInput = document.getElementById('dynamic_projbasedir');
-    // Fallback to current config if input doesn't exist yet
-    let base = baseDirInput ? baseDirInput.value : (currentRawConfig.projbasedir || '');
-    
-    const name = document.getElementById('target_id').value.trim();
-    
-    // Ensure trailing slash on base
-    if (base && !base.endsWith('/') && !base.endsWith('\\')) {
-        base += '/';
+function showS1Err(msg) {
+    const panel = document.getElementById('s1-issues');
+    panel.classList.remove('hidden');
+    panel.innerHTML = `<div class="check-row c-err"><span class="ci">✖</span><span class="cv">${esc(msg)}</span></div>`;
+}
+
+// ─── Step 2: mode ─────────────────────────────────────────────────
+function pickMode(m) {
+    cloneMode = m;
+    document.getElementById('mc-variant').classList.toggle('selected', m === 'variant');
+    document.getElementById('mc-new').classList.toggle('selected', m === 'new');
+    document.getElementById('btn2-next').disabled = false;
+}
+
+// ─── Step 3: identity ─────────────────────────────────────────────
+function prepStep3() {
+    const isVariant = cloneMode === 'variant';
+    const desc = document.getElementById('s3-desc');
+
+    document.getElementById('s3-new').classList.toggle('hidden', isVariant);
+    document.getElementById('s3-variant').classList.toggle('hidden', !isVariant);
+
+    if (isVariant) {
+        desc.textContent = 'Folder and suite name stay the same. Choose a new test role and output filename.';
+        setv('f-testname-v', rawConfig.testname || '');
+        setv('f-projdir-v',  rawConfig.projdir  || '');
+    } else {
+        desc.textContent = 'Enter a new folder slug. All derived paths (src, out_dir, prg_filepath…) update live from it.';
+        setv('f-testname',    rawConfig.testname    || '');
+        setv('f-projdir',     '');          // must be typed — prevents reuse of old name
+        setv('f-projbasedir', rawConfig.projbasedir || '');
+    }
+    setv('f-testtype', '');
+    _autoSuffix = '';
+    setv('f-suffix', '');
+    updatePreview();
+    s3Validate();
+}
+
+function s3Changed() {
+    updatePreview();
+    s3Validate();
+}
+
+function updatePreview() {
+    const projdir  = (cloneMode === 'variant' ? rawConfig.projdir : getv('f-projdir')).trim();
+    const testtype = getv('f-testtype').trim();
+    const newSug   = [projdir, testtype].filter(Boolean).join('_');
+
+    // Auto-fill suffix only if user hasn't manually changed it from our last suggestion
+    const curSuffix = getv('f-suffix');
+    if (curSuffix === _autoSuffix || curSuffix === '') {
+        setv('f-suffix', newSug);
+        _autoSuffix = newSug;
     }
 
-    document.getElementById('target_path').value = base + name + '/';
+    const suffix = getv('f-suffix').trim() || '?';
+    document.getElementById('fname-preview').textContent = `→ __testlist__${suffix}.py`;
 }
 
-document.getElementById('target_id').addEventListener('input', updateTargetPath);
+function s3Validate() {
+    const projdir  = (cloneMode === 'variant' ? rawConfig.projdir : getv('f-projdir')).trim();
+    const testtype = getv('f-testtype').trim();
+    document.getElementById('btn3-next').disabled = !(projdir && testtype);
+}
 
-function cloneProject() {
-    const status = document.getElementById('status');
-    status.style.display = 'block';
-    status.textContent = 'Packaging configuration...';
+// ─── Step 4: validate ─────────────────────────────────────────────
+function prepStep4() {
+    const vars       = getBaseVars();
+    const srcProjdir = rawConfig.projdir || '';
+    const newProjdir = vars.projdir || srcProjdir;
+    const changed    = newProjdir !== srcProjdir;
 
-    // 1. Gather Standard Meta Params
+    // ── Mirror keys ──
+    const mirrorKeys = Object.entries(rawConfig)
+        .filter(([k, v]) =>
+            !SKIP_KEYS.has(k) && typeof v === 'string' &&
+            !TOKEN_RE.test(v) && srcProjdir && v.includes(srcProjdir) && v !== srcProjdir)
+        .map(([k]) => k);
+
+    const mirrorPanel  = document.getElementById('s4-mirror');
+    const mirrorFields = document.getElementById('s4-mirror-fields');
+    if (mirrorKeys.length > 0 && changed) {
+        mirrorPanel.classList.remove('hidden');
+        mirrorFields.innerHTML = mirrorKeys.map(k => {
+            const old = rawConfig[k];
+            const sug = old.replaceAll(srcProjdir, newProjdir);
+            return `<div class="field" style="margin-bottom:10px;">
+                <label>${esc(k)} <span class="badge b-warn">was: ${esc(old)}</span></label>
+                <input class="mx-inp" data-key="${esc(k)}"
+                    value="${esc(sug)}" oninput="s4Refresh()">
+            </div>`;
+        }).join('');
+    } else {
+        mirrorPanel.classList.add('hidden');
+        mirrorFields.innerHTML = '';
+    }
+
+    // ── Hardcoded absolute paths (not already in mirror) ──
+    const hardKeys = Object.entries(rawConfig)
+        .filter(([k, v]) =>
+            !SKIP_KEYS.has(k) && typeof v === 'string' &&
+            !TOKEN_RE.test(v) && ABS_RE.test(v) && !mirrorKeys.includes(k))
+        .map(([k]) => k);
+
+    const hardPanel  = document.getElementById('s4-hard');
+    const hardFields = document.getElementById('s4-hard-fields');
+    if (hardKeys.length > 0) {
+        hardPanel.classList.remove('hidden');
+        hardFields.innerHTML = hardKeys.map(k => {
+            const val = rawConfig[k];
+            return `<div class="field" style="margin-bottom:10px;">
+                <label>${esc(k)}</label>
+                <input class="hx-inp" data-key="${esc(k)}"
+                    value="${esc(val)}" oninput="s4Refresh()">
+                <div class="hint">Source had: <code>${esc(val)}</code></div>
+            </div>`;
+        }).join('');
+    } else {
+        hardPanel.classList.add('hidden');
+        hardFields.innerHTML = '';
+    }
+
+    s4Refresh();
+    s4RunSigCheck();
+}
+
+function s4Refresh() {
+    const vars = getFullVars();   // includes mirror/hard edits
+    const derivedRows = Object.entries(rawConfig)
+        .filter(([k, v]) => !SKIP_KEYS.has(k) && typeof v === 'string' && TOKEN_RE.test(v));
+
+    let hasErr = false;
+    const panel = document.getElementById('s4-derived');
+
+    if (derivedRows.length === 0) {
+        panel.innerHTML = '<div class="check-row"><span class="cv" style="color:var(--text-dim)">No template paths in this config.</span></div>';
+    } else {
+        panel.innerHTML = derivedRows.map(([k, tmpl]) => {
+            const resolved = resolveStr(tmpl, vars);
+            const bad = TOKEN_RE.test(resolved);
+            if (bad) hasErr = true;
+            // Also flag doubled path segments
+            const doubled = !bad && /([/][^/]+)\1/.test(resolved);
+            if (doubled) hasErr = true;
+            const level = bad ? 'err' : doubled ? 'warn' : 'ok';
+            return `<div class="check-row c-${level}">
+                <span class="ci">${icon(level)}</span>
+                <span class="ck">${esc(k)}</span>
+                <span class="cv">${esc(resolved)}</span>
+            </div>`;
+        }).join('');
+    }
+
+    updateS4Gate(hasErr);
+}
+
+function updateS4Gate(pathErr) {
+    const gate   = document.getElementById('s4-err-gate');
+    const blocked = pathErr || _sigErrors;
+    if (blocked) {
+        gate.className = 'status-box s-err';
+        const msgs = [];
+        if (pathErr)    msgs.push('✖ Template paths have unresolved tokens or malformed segments.');
+        if (_sigErrors) msgs.push('✖ Step params contain unknown argument names — see "Step param check" above.');
+        gate.textContent = msgs.join('\n');
+        document.getElementById('btn4-next').disabled = true;
+    } else {
+        gate.className = 'status-box';
+        gate.classList.add('hidden');
+        document.getElementById('btn4-next').disabled = false;
+    }
+}
+
+// ─── Step 5: review ───────────────────────────────────────────────
+function prepStep5() {
+    const vars    = getFullVars();
+    const destDir = resolveStr('{projbasedir}{projdir}/', vars);
+    const outFile = `__testlist__${getv('f-suffix').trim()}.py`;
+
+    setv('rev-dest', destDir);
+    setv('rev-file', outFile);
+
+    const tbody = document.getElementById('diff-body');
+    const keys  = Object.keys(rawConfig).filter(k => k !== 'structure' && k !== 'steps');
+
+    tbody.innerHTML = keys.map(k => {
+        const srcVal = rawConfig[k];
+        const srcStr = String(srcVal ?? '');
+        const isTemplate = TOKEN_RE.test(srcStr);
+
+        let cloneVal, cloneStr, rowClass, srcDisplay, cloneDisplay;
+
+        if (isTemplate) {
+            // Show the template in source col, resolved in clone col
+            const resolved = resolveStr(srcStr, vars);
+            const bad = TOKEN_RE.test(resolved);
+            rowClass    = bad ? 'tr-warn' : (resolved !== resolveStr(srcStr, rawConfig) ? 'tr-changed' : '');
+            srcDisplay  = `<span class="dd">${esc(srcStr)}</span>`;
+            cloneDisplay = `<span class="${bad ? 'dr-old' : 'dr-new'}">${esc(resolved)}</span>`;
+        } else {
+            cloneStr = String(vars[k] ?? srcStr);
+            const changed = cloneStr !== srcStr;
+            rowClass     = changed ? 'tr-changed' : '';
+            srcDisplay   = `<span class="${changed ? 'dr-old' : 'ds'}">${esc(srcStr)}</span>`;
+            cloneDisplay = changed
+                ? `<span class="dr-new">${esc(cloneStr)}</span>`
+                : `<span class="ds">${esc(srcStr)}</span>`;
+        }
+
+        return `<tr class="${rowClass}">
+            <td class="dk">${esc(k)}</td>
+            <td>${srcDisplay}</td>
+            <td>${cloneDisplay}</td>
+        </tr>`;
+    }).join('');
+}
+
+// ─── Execute ──────────────────────────────────────────────────────
+function doClone() {
+    const btn    = document.getElementById('btn-execute');
+    const status = document.getElementById('clone-status');
+    btn.disabled = true;
+    status.className = 'status-box s-info';
+    status.textContent = '⏳ Cloning…';
+
+    const vars      = getFullVars();
+    const destDir   = resolveStr('{projbasedir}{projdir}/', vars);
+    const outFile   = `__testlist__${getv('f-suffix').trim()}.py`;
+
     const payload = {
-        src_module: document.getElementById('sourcetestlist').value,
-        target_id: document.getElementById('target_id').value.trim(),
-        target_type: document.getElementById('target_type').value.trim(),
-        target_path: document.getElementById('target_path').value.trim(),
+        src_module:    srcModule,
+        target_id:     vars.projdir,
+        target_path:   destDir,
+        testlist_name: outFile,
+        ...vars
     };
+    delete payload.structure;
+    delete payload.steps;
 
-    // 2. Gather Dynamic Config Params
-    const inputs = document.querySelectorAll('.dynamic-conf-input');
-    inputs.forEach(inp => {
-        let val = inp.value;
-        // Attempt to restore numbers/booleans if needed, or send as strings
-        // Here we send as strings, backend should cast if necessary, 
-        // OR we can try parsing JSON if it looks like an array/obj
-        payload[inp.dataset.key] = val;
-    });
+    // Step param fixes made in Step 4 — backend should apply these to
+    // the steps it writes for the cloned testlist.
+    const stepFixes = collectStepFixes();
+    if (stepFixes.length > 0) {
+        payload.step_param_fixes = stepFixes;
+    }
 
-    // 3. Send Request
-    // Note: We are sending a flattened object. 
-    // The backend should reconstruct the config dict from these keys.
-    const queryString = new URLSearchParams(payload).toString();
-
-    fetch(`/clone_as_new?${queryString}`)
+    fetch('/api/v1/tests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
         .then(r => r.json())
         .then(res => {
-            status.textContent = res.status === 'success' ? 'Success! Path: ' + res.path : 'Error: ' + res.message;
-            status.style.background = res.status === 'success' ? '#f0fff0' : '#fff0f0';
-            status.style.color = res.status === 'success' ? 'green' : 'red';
+            btn.disabled = false;
+            if (res.data) {
+                let msg = `✓ Created: ${res.data.testlist_file}\n  Destination: ${res.data.dest_dir}`;
+                if (res.data.repairs && res.data.repairs.length > 0) {
+                    msg += `\n\n⚙ ${res.data.repairs.length} auto-repair${res.data.repairs.length !== 1 ? 's' : ''} applied:`;
+                    res.data.repairs.forEach(r => {
+                        const oldVal = r.old === null ? 'null' : `"${r.old}"`;
+                        const newVal = r.new === null ? 'null (cleared)' : `"${r.new}"`;
+                        msg += `\n  [${r.scope}] ${r.key}: ${oldVal} → ${newVal}`;
+                    });
+                }
+                status.className = 'status-box s-ok';
+                status.textContent = msg;
+            } else {
+                status.className = 'status-box s-err';
+                status.textContent = `✗ ${res.error && res.error.message}`;
+            }
         })
         .catch(err => {
-            status.textContent = 'Network Error: ' + err;
-            status.style.color = 'red';
+            btn.disabled = false;
+            status.className = 'status-box s-err';
+            status.textContent = `Network error: ${err}`;
         });
 }
 
+// ─── Var builders ────────────────────────────────────────────────
+function getBaseVars() {
+    // Identity fields only — no mirror/hard edits yet
+    const v = { ...rawConfig };
+    if (cloneMode === 'new') {
+        v.testname    = getv('f-testname').trim();
+        v.projdir     = getv('f-projdir').trim();
+        v.projbasedir = getv('f-projbasedir').trim();
+    }
+    v.testtype = getv('f-testtype').trim();
+    return v;
+}
+
+function getFullVars() {
+    const v = getBaseVars();
+    // Mirror edits (step 4 fields)
+    document.querySelectorAll('.mx-inp').forEach(el => { v[el.dataset.key] = el.value; });
+    // Hardcoded path edits
+    document.querySelectorAll('.hx-inp').forEach(el => { v[el.dataset.key] = el.value; });
+    return v;
+}
+
+// ─── Template resolution ─────────────────────────────────────────
+function resolveStr(tmpl, vars, passes = 6) {
+    let s = String(tmpl ?? '');
+    for (let i = 0; i < passes; i++) {
+        const prev = s;
+        s = s.replace(/\{([^}]+)\}/g, (_, k) =>
+            vars[k] !== undefined ? String(vars[k]) : `{${k}}`);
+        if (s === prev) break;
+    }
+    return s;
+}
+
+// ─── Signature check ─────────────────────────────────────────────
+
+function s1SigCheck() {
+    // Non-blocking preview on step 1 — shows issues in source but doesn't gate anything
+    const wrap  = document.getElementById('s1-sig-wrap');
+    const panel = document.getElementById('s1-sig-panel');
+    const warn  = document.getElementById('s1-sig-warn');
+    wrap.classList.remove('hidden');
+    panel.innerHTML = '<div class="sig-loading">Checking step params…</div>';
+    warn.classList.add('hidden');
+
+    fetch(`/api/v1/tests/${encodeURIComponent(srcModule)}/validate`, { method: 'POST' })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.data) {
+                panel.innerHTML = `<div class="sig-loading" style="color:var(--err)">
+                    Could not load dispatch functions: ${esc((res.error && res.error.message) || '')}</div>`;
+                return;
+            }
+            renderSigPanel(panel, res.data.results);
+            if (res.data.has_errors) {
+                warn.className = 'status-box s-err';
+                const errCount = res.data.results.reduce((n, r) => n + r.issues.length, 0);
+                warn.textContent =
+                    `⚠ ${errCount} param issue${errCount !== 1 ? 's' : ''} found in source config.\n`
+                  + `These will be carried into the clone — review the Step param check in Step 4.`;
+                warn.style.display = 'block';
+            }
+        })
+        .catch(e => {
+            panel.innerHTML = `<div class="sig-loading" style="color:var(--text-dim)">
+                Sig check unavailable: ${esc(String(e))}</div>`;
+        });
+}
+
+function s4RunSigCheck(skipAutoFix = false) {
+    const panel = document.getElementById('s4-sig-panel');
+    panel.innerHTML = '<div class="sig-loading">Checking step params against dispatch signatures…</div>';
+    _sigErrors = false;
+
+    // Build the resolved var map as the clone will see it — mirrors getFullVars()
+    // but we also resolve template keys so value-checks see final paths
+    const vars = getFullVars();
+    // Resolve all template values into vars so the backend can use them
+    Object.keys(rawConfig).forEach(k => {
+        if (typeof rawConfig[k] === 'string' && TOKEN_RE.test(rawConfig[k])) {
+            vars[k] = resolveStr(rawConfig[k], vars);
+        }
+    });
+
+    // Apply any in-progress step param fixes before validating
+    const config = { ...rawConfig };
+    const fixedSteps = getFixedSteps();
+    if (fixedSteps !== undefined) config.steps = fixedSteps;
+
+    fetch(`/api/v1/tests/${encodeURIComponent(srcModule)}/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config, resolved_vars: vars }),
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.data) {
+                panel.innerHTML = `<div class="sig-loading" style="color:var(--err)">
+                    Could not load dispatch: ${esc((res.error && res.error.message) || '')}</div>`;
+                _sigErrors = false;
+                renderStepFixesPanel();
+                s4RefreshGateOnly();
+                return;
+            }
+
+            // If any remaining unknown_param issues match a known legacy
+            // rename, apply it silently and re-check once so the panel
+            // renders the already-fixed state.
+            if (!skipAutoFix && autoApplyKnownFixes(res.data.results)) {
+                s4RunSigCheck(true);
+                return;
+            }
+
+            renderSigPanel(panel, res.data.results, true);
+            _sigErrors = res.data.has_errors;
+            renderStepFixesPanel();
+            s4RefreshGateOnly();
+        })
+        .catch(e => {
+            panel.innerHTML = `<div class="sig-loading" style="color:var(--text-dim)">
+                Sig check unavailable: ${esc(String(e))}</div>`;
+            _sigErrors = false;
+            renderStepFixesPanel();
+            s4RefreshGateOnly();
+        });
+}
+
+function s4RefreshGateOnly() {
+    // Re-evaluate path errors without rebuilding the whole panel
+    const vars = getFullVars();
+    const derivedRows = Object.entries(rawConfig)
+        .filter(([k, v]) => !SKIP_KEYS.has(k) && typeof v === 'string' && TOKEN_RE.test(v));
+    const pathErr = derivedRows.some(([, tmpl]) => {
+        const r = resolveStr(tmpl, vars);
+        return TOKEN_RE.test(r) || /([/][^/]+)\1/.test(r);
+    });
+    updateS4Gate(pathErr);
+}
+
+function renderSigPanel(panel, results, editable = false) {
+    if (!results || results.length === 0) {
+        panel.innerHTML = '<div class="sig-loading" style="color:var(--text-dim)">No steps to check.</div>';
+        return;
+    }
+    if (results.length === 1 && results[0].step_index === -1) {
+        panel.innerHTML = `<div class="sig-loading" style="color:var(--err)">
+            Load error: ${esc(results[0].issues[0]?.detail || 'unknown')}</div>`;
+        return;
+    }
+
+    const KIND_LABEL = {
+        unknown_param:      'unknown param',
+        unknown_action:     'unknown action',
+        hardcoded_srcpath:  'hardcoded source path',
+        unresolved_token:   'unresolved token',
+        doubled_segment:    'doubled path segment',
+        bare_filename:      'bare filename (no path)',
+        load_error:         'load error',
+    };
+
+    panel.innerHTML = results.map(r => {
+        const hasIssues = r.issues && r.issues.length > 0;
+        const statusHtml = !r.found
+            ? `<span class="sh-err">✖ action not found</span>`
+            : hasIssues
+                ? `<span class="sh-err">✖ ${r.issues.length} issue${r.issues.length !== 1 ? 's' : ''}</span>`
+                : `<span class="sh-ok">✓ ok</span>`;
+
+        const headHtml = `<div class="sig-step-head">
+            <span class="sh-idx">${r.step_index + 1}</span>
+            <span class="sh-name">${esc(r.action)}</span>
+            ${statusHtml}
+        </div>`;
+
+        if (!hasIssues && r.found) return headHtml;
+
+        const issueRows = (r.issues || []).map(iss => {
+            const label = KIND_LABEL[iss.kind] || iss.kind;
+            const sugHtml = iss.suggestion
+                ? ` → <strong>${esc(iss.suggestion)}</strong>` : '';
+            const isWarn = iss.kind === 'bare_filename';
+            const rowStyle = isWarn
+                ? 'background:#fdf9ee;'
+                : '';
+            const iconColor = isWarn ? 'color:var(--warn)' : 'color:var(--err)';
+            const keyColor  = isWarn ? 'color:var(--warn)' : 'color:var(--err)';
+            const autoFixed = isWarn
+                ? ' <span style="color:var(--ok);font-style:italic">(auto-cleared on clone)</span>' : '';
+
+            // For value issues, show raw → resolved if they differ
+            let valueHtml = '';
+            if (iss.value && iss.resolved && iss.value !== iss.resolved) {
+                valueHtml = `<div class="sig-val-detail">
+                    <span class="svd-raw">${esc(iss.value)}</span>
+                    <span class="svd-arrow">→</span>
+                    <span class="svd-res">${esc(iss.resolved)}</span>
+                </div>`;
+            } else if (iss.value) {
+                valueHtml = `<div class="sig-val-detail">
+                    <span class="svd-raw">${esc(iss.value)}</span>
+                </div>`;
+            }
+
+            // Inline fix controls — step 4 only
+            let fixHtml = '';
+            if (editable) {
+                const stepIdx = r.step_index;
+                if (iss.kind === 'unknown_param') {
+                    const curFix = (_stepParamFixes[stepIdx] || {})[iss.key];
+                    const opts = ['<option value="">— choose fix —</option>'];
+                    (r.valid_params || []).forEach(p => {
+                        const isSel = curFix !== undefined ? curFix === p : iss.suggestion === p;
+                        opts.push(`<option value="${esc(p)}"${isSel ? ' selected' : ''}>rename → ${esc(p)}</option>`);
+                    });
+                    opts.push(`<option value="__remove__"${curFix === '' ? ' selected' : ''}>✕ remove this param</option>`);
+                    fixHtml = `<div class="sig-fix-row">
+                        <span class="sf-label">Fix:</span>
+                        <select onchange="applyStepParamFix(${stepIdx}, '${esc(iss.key)}', this.value)">
+                            ${opts.join('')}
+                        </select>
+                    </div>`;
+                } else if (iss.kind === 'unknown_action') {
+                    const cur = _stepActionFixes[stepIdx] !== undefined ? _stepActionFixes[stepIdx] : (r.action || '');
+                    fixHtml = `<div class="sig-fix-row">
+                        <span class="sf-label">Action:</span>
+                        <input type="text" value="${esc(cur)}"
+                            onchange="applyStepActionFix(${stepIdx}, this.value)">
+                    </div>`;
+                } else if (iss.key && (iss.value || iss.resolved || iss.suggestion)) {
+                    const stored = (_stepValueFixes[stepIdx] || {})[iss.key];
+                    const cur = stored !== undefined ? stored : (iss.suggestion || iss.resolved || iss.value);
+                    fixHtml = `<div class="sig-fix-row">
+                        <span class="sf-label">Set value:</span>
+                        <input type="text" value="${esc(cur)}"
+                            onchange="applyStepValueFix(${stepIdx}, '${esc(iss.key)}', this.value)">
+                    </div>`;
+                }
+            }
+
+            return `<div class="sig-issue-row" style="${rowStyle}">
+                <span class="si-icon" style="${iconColor}">${isWarn ? '⚠' : '✖'}</span>
+                <span class="si-key" style="${keyColor}">${esc(iss.key || '')}</span>
+                <span class="si-msg">${esc(label)}${sugHtml}${autoFixed}</span>
+                ${valueHtml}
+                ${fixHtml}
+            </div>`;
+        }).join('');
+
+        const validHint = r.found && r.valid_params && r.valid_params.length
+            ? `<div class="sig-issue-row" style="background:var(--surface2);">
+                <span class="si-icon" style="color:var(--text-dim)">ℹ</span>
+                <span class="si-key" style="color:var(--text-dim)">valid params</span>
+                <span class="si-msg" style="color:var(--text-dim)">${esc(r.valid_params.join(', '))}</span>
+               </div>`
+            : '';
+
+        return headHtml + issueRows + validHint;
+    }).join('');
+}
+
+// ─── Step param fixes ─────────────────────────────────────────────
+// These let Step 4 remap/remove/edit step params that the dispatch
+// signature check flagged as invalid, then feed the corrected steps
+// back into validation and into the clone payload.
+
+function applyStepParamFix(stepIndex, oldKey, newVal) {
+    if (newVal === '') {
+        if (_stepParamFixes[stepIndex]) {
+            delete _stepParamFixes[stepIndex][oldKey];
+            if (Object.keys(_stepParamFixes[stepIndex]).length === 0) delete _stepParamFixes[stepIndex];
+        }
+    } else {
+        if (!_stepParamFixes[stepIndex]) _stepParamFixes[stepIndex] = {};
+        // newVal === '__remove__' means "remove this param" — stored as ''
+        _stepParamFixes[stepIndex][oldKey] = (newVal === '__remove__') ? '' : newVal;
+    }
+    s4RunSigCheck();
+}
+
+function applyStepValueFix(stepIndex, key, newVal) {
+    if (!_stepValueFixes[stepIndex]) _stepValueFixes[stepIndex] = {};
+    _stepValueFixes[stepIndex][key] = newVal;
+    s4RunSigCheck();
+}
+
+function applyStepActionFix(stepIndex, newVal) {
+    newVal = (newVal || '').trim();
+    if (newVal) _stepActionFixes[stepIndex] = newVal;
+    else delete _stepActionFixes[stepIndex];
+    s4RunSigCheck();
+}
+
+// Scans validate_steps results for unknown_param issues that match an
+// entry in KNOWN_STEP_PARAM_FIXES (for that step's action) and silently
+// applies the rename/removal. Returns true if anything was applied
+// (caller should re-run the check to get a clean result).
+function autoApplyKnownFixes(results) {
+    let applied = false;
+    (results || []).forEach(r => {
+        const table = KNOWN_STEP_PARAM_FIXES[r.action];
+        if (!table) return;
+        (r.issues || []).forEach(iss => {
+            if (iss.kind !== 'unknown_param') return;
+            if (!(iss.key in table)) return;
+
+            const tag = `${r.step_index}:${iss.key}`;
+            if (_suppressedAutoFixes.has(tag)) return;       // user undid this before
+            const existing = _stepParamFixes[r.step_index];
+            if (existing && iss.key in existing) return;     // already has a fix (auto or manual)
+
+            const newKey = table[iss.key];
+            if (!_stepParamFixes[r.step_index]) _stepParamFixes[r.step_index] = {};
+            _stepParamFixes[r.step_index][iss.key] = (newKey === null) ? '' : newKey;
+            _autoFixedParams.add(tag);
+            applied = true;
+        });
+    });
+    return applied;
+}
+
+function undoParamFix(stepIndex, oldKey) {
+    const tag = `${stepIndex}:${oldKey}`;
+    if (_autoFixedParams.has(tag)) {
+        // Permanently suppress this auto-fix so it doesn't get silently
+        // re-applied on the next check.
+        _autoFixedParams.delete(tag);
+        _suppressedAutoFixes.add(tag);
+    }
+    if (_stepParamFixes[stepIndex]) {
+        delete _stepParamFixes[stepIndex][oldKey];
+        if (Object.keys(_stepParamFixes[stepIndex]).length === 0) delete _stepParamFixes[stepIndex];
+    }
+    s4RunSigCheck();
+}
+
+function undoValueFix(stepIndex, key) {
+    if (_stepValueFixes[stepIndex]) {
+        delete _stepValueFixes[stepIndex][key];
+        if (Object.keys(_stepValueFixes[stepIndex]).length === 0) delete _stepValueFixes[stepIndex];
+    }
+    s4RunSigCheck();
+}
+
+function undoActionFix(stepIndex) {
+    delete _stepActionFixes[stepIndex];
+    s4RunSigCheck();
+}
+
+// Returns rawConfig.steps with all pending fixes applied (deep-cloned),
+// or undefined/null if the source config has no steps at all.
+function getFixedSteps() {
+    if (!rawConfig.steps) return rawConfig.steps;
+    const steps = JSON.parse(JSON.stringify(rawConfig.steps));
+
+    Object.entries(_stepParamFixes).forEach(([idxStr, fixes]) => {
+        const step = steps[Number(idxStr)];
+        if (!step) return;
+        Object.entries(fixes).forEach(([oldKey, newKey]) => {
+            const container = findKeyContainer(step, oldKey);
+            if (!container) return;
+            const val = container[oldKey];
+            delete container[oldKey];
+            if (newKey) container[newKey] = val;   // '' (remove) just drops it
+        });
+    });
+
+    Object.entries(_stepValueFixes).forEach(([idxStr, fixes]) => {
+        const step = steps[Number(idxStr)];
+        if (!step) return;
+        Object.entries(fixes).forEach(([key, val]) => {
+            const container = findKeyContainer(step, key);
+            if (container) container[key] = val;
+        });
+    });
+
+    Object.entries(_stepActionFixes).forEach(([idxStr, newAction]) => {
+        const idx = Number(idxStr);
+        const step = steps[idx];
+        const origStep = rawConfig.steps[idx];
+        if (!step || !origStep) return;
+        const origAction = findActionValue(origStep);
+        if (origAction == null) return;
+        const ref = findActionKeyContainer(step, origAction);
+        if (ref) ref.container[ref.key] = newAction;
+    });
+
+    return steps;
+}
+
+// Recursively finds the object that directly owns `key`, searching
+// through nested objects/arrays — schema-agnostic so this works
+// whether step params live at the top level of a step or nested
+// under e.g. "args"/"params"/"kwargs".
+function findKeyContainer(obj, key) {
+    if (obj === null || typeof obj !== 'object') return null;
+    if (Array.isArray(obj)) {
+        for (const item of obj) {
+            const found = findKeyContainer(item, key);
+            if (found) return found;
+        }
+        return null;
+    }
+    if (Object.prototype.hasOwnProperty.call(obj, key)) return obj;
+    for (const k of Object.keys(obj)) {
+        const found = findKeyContainer(obj[k], key);
+        if (found) return found;
+    }
+    return null;
+}
+
+// Recursively finds the {container, key} pair whose value equals
+// `actionName` — used to rename a step's dispatch action.
+function findActionKeyContainer(obj, actionName) {
+    if (obj === null || typeof obj !== 'object') return null;
+    if (Array.isArray(obj)) {
+        for (const item of obj) {
+            const found = findActionKeyContainer(item, actionName);
+            if (found) return found;
+        }
+        return null;
+    }
+    for (const k of Object.keys(obj)) {
+        if (obj[k] === actionName) return { container: obj, key: k };
+        if (typeof obj[k] === 'object' && obj[k] !== null) {
+            const found = findActionKeyContainer(obj[k], actionName);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+// Best-effort lookup of the field holding a step's dispatch action name.
+function findActionValue(step) {
+    for (const k of ['action', 'call', 'fn', 'function', 'dispatch', 'name']) {
+        if (typeof step[k] === 'string') return step[k];
+    }
+    return null;
+}
+
+// Flat list of {step_index, type, ...} fixes — sent alongside the
+// clone request so the backend can apply the same edits when it
+// writes the cloned testlist's steps.
+function collectStepFixes() {
+    const fixes = [];
+    Object.entries(_stepParamFixes).forEach(([idx, m]) => {
+        Object.entries(m).forEach(([oldKey, newKey]) => {
+            if (newKey) fixes.push({ step_index: Number(idx), type: 'rename_param', old_key: oldKey, new_key: newKey });
+            else        fixes.push({ step_index: Number(idx), type: 'remove_param', old_key: oldKey });
+        });
+    });
+    Object.entries(_stepValueFixes).forEach(([idx, m]) => {
+        Object.entries(m).forEach(([key, val]) => {
+            fixes.push({ step_index: Number(idx), type: 'set_value', key, value: val });
+        });
+    });
+    Object.entries(_stepActionFixes).forEach(([idx, val]) => {
+        fixes.push({ step_index: Number(idx), type: 'set_action', value: val });
+    });
+    return fixes;
+}
+
+// Renders the "pending step param fixes" summary above the sig panel,
+// with per-fix undo links.
+function renderStepFixesPanel() {
+    const wrap = document.getElementById('s4-step-fixes');
+    const rows = [];
+
+    Object.entries(_stepParamFixes).forEach(([idx, fixes]) => {
+        Object.entries(fixes).forEach(([oldKey, newKey]) => {
+            const desc = newKey
+                ? `rename <strong>${esc(oldKey)}</strong> → <strong>${esc(newKey)}</strong>`
+                : `remove <strong>${esc(oldKey)}</strong>`;
+            const autoBadge = _autoFixedParams.has(`${idx}:${oldKey}`)
+                ? ' <span class="sf-auto">auto</span>' : '';
+            rows.push(`<div class="step-fix-row">
+                <span class="sf-step">Step ${Number(idx) + 1}</span>
+                <span>${desc}${autoBadge}</span>
+                <span class="sf-undo" onclick="undoParamFix(${idx}, '${esc(oldKey)}')">✕ undo</span>
+            </div>`);
+        });
+    });
+
+    Object.entries(_stepValueFixes).forEach(([idx, fixes]) => {
+        Object.entries(fixes).forEach(([key, val]) => {
+            rows.push(`<div class="step-fix-row">
+                <span class="sf-step">Step ${Number(idx) + 1}</span>
+                <span>set <strong>${esc(key)}</strong> = <strong>${esc(val)}</strong></span>
+                <span class="sf-undo" onclick="undoValueFix(${idx}, '${esc(key)}')">✕ undo</span>
+            </div>`);
+        });
+    });
+
+    Object.entries(_stepActionFixes).forEach(([idx, val]) => {
+        rows.push(`<div class="step-fix-row">
+            <span class="sf-step">Step ${Number(idx) + 1}</span>
+            <span>action → <strong>${esc(val)}</strong></span>
+            <span class="sf-undo" onclick="undoActionFix(${idx})">✕ undo</span>
+        </div>`);
+    });
+
+    if (rows.length === 0) {
+        wrap.classList.add('hidden');
+        wrap.innerHTML = '';
+        return;
+    }
+    wrap.classList.remove('hidden');
+    wrap.innerHTML = `<div class="step-fixes-panel">
+        <div class="step-fixes-title">✓ Step param fixes — applied on clone (Auto = known-issue auto-repair)</div>
+        ${rows.join('')}
+    </div>`;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────
+function getv(id) { const e = document.getElementById(id); return e ? e.value : ''; }
+function setv(id, v) { const e = document.getElementById(id); if (e) e.value = v; }
+function esc(s) {
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function icon(l) { return l === 'ok' ? '✓' : l === 'warn' ? '⚠' : '✖'; }
+
 loadTests();
-    </script>
+</script>
 {% endblock %}

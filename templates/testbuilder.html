@@ -108,6 +108,109 @@
     color: white;
 }
 
+/* ── Step param signature check (mirrors clonetool) ── */
+#sig-panel {
+    border: 1px solid #eee;
+    border-radius: 4px;
+    overflow: hidden;
+    font-family: monospace;
+    font-size: 0.8em;
+}
+.sig-loading { padding: 10px 12px; color: #888; }
+.sig-step-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-bottom: 1px solid #eee;
+    background: #fafafa;
+}
+.sig-step-head .sh-idx { color: #888; flex-shrink: 0; }
+.sig-step-head .sh-name { flex: 1; }
+.sig-step-head .sh-ok { color: #28a745; }
+.sig-step-head .sh-err { color: #dc3545; }
+.sig-issue-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 12px 6px 28px;
+    border-bottom: 1px solid #f5f5f5;
+    flex-wrap: wrap;
+}
+.sig-issue-row .si-icon { flex-shrink: 0; }
+.sig-issue-row .si-key { font-weight: bold; flex-shrink: 0; }
+.sig-issue-row .si-msg { color: #555; }
+.sig-val-detail {
+    flex-basis: 100%;
+    padding-left: 18px;
+    color: #888;
+    word-break: break-all;
+}
+.sig-val-detail .svd-raw { color: #dc3545; text-decoration: line-through; opacity: 0.8; }
+.sig-val-detail .svd-arrow { color: #aaa; }
+.sig-val-detail .svd-res { color: #333; }
+.sig-fix-row {
+    flex-basis: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0 2px 18px;
+    flex-wrap: wrap;
+}
+.sig-fix-row .sf-label { color: #888; }
+.sig-fix-row select, .sig-fix-row input[type="text"] {
+    font-family: monospace;
+    font-size: 0.95em;
+    padding: 3px 6px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+.sig-fix-row input[type="text"] { flex: 1; min-width: 160px; }
+
+.step-fixes-panel {
+    margin-bottom: 10px;
+    border: 1px solid #28a745;
+    border-radius: 4px;
+    background: #f0faf4;
+    overflow: hidden;
+    font-family: monospace;
+    font-size: 0.8em;
+}
+.step-fixes-title {
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 0.85em;
+    color: #28a745;
+    padding: 6px 12px;
+    border-bottom: 1px solid #28a745;
+}
+.step-fix-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 12px;
+    border-bottom: 1px solid #eee;
+}
+.step-fix-row:last-child { border-bottom: none; }
+.step-fix-row .sf-step { color: #888; flex-shrink: 0; }
+.step-fix-row .sf-auto {
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #007bff;
+    border: 1px solid #007bff;
+    border-radius: 3px;
+    padding: 0 4px;
+    margin-left: 4px;
+}
+.step-fix-row .sf-undo {
+    margin-left: auto;
+    color: #dc3545;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.step-fix-row .sf-undo:hover { text-decoration: underline; }
+
 
 </style>
 
@@ -117,6 +220,7 @@
         <!-- Timeline sidebar -->
         <div id="timeline" style="width:350px; border-right:1px solid #ccc; position:relative; padding:20px 10px 20px 60px; overflow-y:auto; background:#f4f4f4;">
             <div id="line" style="position:absolute; left:30px; top:0; bottom:0; width:2px; background:#bbb;"></div>
+            <div style="font-size:0.7em; color:#888; margin-bottom:4px;">Pause on</div>
             <div id="steps"></div>
         </div>
 
@@ -135,6 +239,11 @@
 
             <label for="testlist" style="margin-left: 15px;">Source Test:</label>
             <select id="testlist" name="source_test" data-testid="test-select" onchange="updateFields()"></select>
+
+            <label for="test-search" style="margin-left: 15px;">Search:</label>
+            <input type="text" id="test-search" data-testid="test-search"
+                oninput="renderTests(document.getElementById('system-filter').value)"
+                style="padding:4px; min-width:160px;">
         </div>
     </div>
 
@@ -166,6 +275,14 @@
            onkeyup="filterActions()" 
            style="width:100%; padding:5px; box-sizing:border-box;">
 
+    <div style="display:flex; align-items:center; justify-content:space-between; font-size:0.8em; color:#666;">
+        <span id="backend-filter-label"></span>
+        <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+            <input type="checkbox" id="show-all-actions" onchange="filterActions()">
+            Show all actions
+        </label>
+    </div>
+
     <div id="action-list" role="listbox" 
          style="border:1px solid #ccc; height:300px; overflow-y:auto; background:#fff;">
     </div>
@@ -173,23 +290,144 @@
     <hr style="width:100%; border:0; border-top:1px solid #eee;">
     
     <button class="primary-btn" onclick="addStep()" data-testid="add-step-btn">Add Step</button>
-    <button onclick="updateStep()" data-testid="update-step-btn">Update Selected</button>
 </div>
 
                     <div id="param-right" style="display:flex; flex-direction:column; overflow:hidden;">
 
                         <label><strong>Parameters:</strong></label>
+                        <div id="driver-hint" style="display:none; margin-bottom:8px; border:1px solid #c3e6cb; border-radius:4px; background:#f0faf4; font-family:monospace; font-size:0.8em; overflow:hidden;">
+                            <div style="padding:5px 10px; background:#d4edda; color:#155724; font-size:0.75em; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">
+                                🔍 Driver files found in src/
+                            </div>
+                            <div id="driver-hint-body" style="padding:8px 10px;"></div>
+                        </div>
                         <div id="param-table-wrapper" style="height:280px; overflow-y:auto; border:1px solid #eee; flex-shrink:0;">
                             <table id="param-table">
                                 <tbody></tbody>
                             </table>
                         </div>
+
+                        <label for="step-description" style="margin-top:10px;">
+                            <strong>Step notes:</strong>
+                        </label>
+                        <textarea id="step-description" data-testid="step-description"
+                            style="width:100%; box-sizing:border-box; min-height:50px; resize:vertical;
+                                   padding:6px; font-family:inherit; font-size:0.9em; border:1px solid #ccc;
+                                   border-radius:4px;"></textarea>
+
+                        <label for="test-description" style="margin-top:10px;">
+                            <strong>Description / goal:</strong>
+                        </label>
+                        <textarea id="test-description" data-testid="test-description"
+                            oninput="onDescriptionInput()"
+                            style="width:100%; box-sizing:border-box; min-height:70px; resize:vertical;
+                                   padding:6px; font-family:inherit; font-size:0.9em; border:1px solid #ccc;
+                                   border-radius:4px;"></textarea>
+                        <div id="description-status" style="font-size:0.8em; color:#888; min-height:1em;"></div>
+
+                        <label for="test-tags" style="margin-top:10px;">
+                            <strong>Tags:</strong>
+                        </label>
+                        <input type="text" id="test-tags" data-testid="test-tags"
+                            oninput="onTagsInput()"
+                            style="width:100%; box-sizing:border-box; padding:6px; font-family:inherit;
+                                   font-size:0.9em; border:1px solid #ccc; border-radius:4px;">
+                        <div id="tags-status" style="font-size:0.8em; color:#888; min-height:1em;"></div>
                     </div>
                 </div>
-                        <button onclick="sendSteps()" style="background:#28a745;color:white;border:none;border-radius:4px;margin-left:20px;">Sync to Flask</button>
+<div id="step-fixes" style="display:none; margin-top:10px;"></div>
+<div style="margin-top:10px;">
+    <label><strong>Step param check:</strong></label>
+    <div id="sig-panel" style="margin-top:6px;">
+        <div class="sig-loading">Select a source test to check step params…</div>
+    </div>
+</div>
+<button id="view-detail-btn" onclick="viewTestDetail()" disabled
+        style="background:#6c757d;color:white;border:none;border-radius:4px;margin-left:8px;">View Test Details</button>
+                        <button onclick="saveAndSync()" data-testid="save-sync-btn" style="background:#28a745;color:white;border:none;border-radius:4px;margin-left:20px;">Save &amp; Sync</button>
+                <fieldset style="margin-top:12px; border:1px solid #ccc; border-radius:4px; padding:8px 12px;">
+                    <legend style="font-size:0.9em;">Disk image tools (target: {projbasedir}{projdir}/&lt;image&gt;)</legend>
+                    <div>
+                        <label>Size (MB): <input id="mkdisk-size" type="number" min="1" placeholder="blank=copy" style="width:90px;"></label>
+                        <label style="margin-left:10px;">Image name: <input id="mkdisk-name" type="text" placeholder="(uses hdd1_img)" style="width:150px;"></label>
+                        <label style="margin-left:10px;"><input id="mkdisk-overwrite" type="checkbox"> overwrite</label>
+                    </div>
+                    <div style="margin-top:6px;">
+                        <button onclick="createDiskImage()" style="background:#17a2b8;color:#fff;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;">Create blank FAT</button>
+                        <span style="margin:0 8px;color:#999;">or clone from:</span>
+                        <select id="mkdisk-source" onfocus="if(this.options.length<=1)loadDiskImages()" style="min-width:280px;"><option value="">— select existing image —</option></select>
+                        <button onclick="loadDiskImages()" title="refresh list" style="border:none;background:#eee;border-radius:4px;padding:3px 8px;cursor:pointer;">↻</button>
+                        <button onclick="cloneDiskImage()" style="background:#6f42c1;color:#fff;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;">Clone → this project</button>
+                    </div>
+                    <span id="mkdisk-status" style="font-size:0.9em;"></span>
+                    <div style="font-size:0.8em;color:#888;margin-top:4px;">
+                        Clone with no size = exact copy. Clone with a bigger size grows it: a <b>bootable DOS disk is rebuilt bootable</b> at the new size (system files + all data carried over); a plain data disk keeps its files (not bootable). "Create blank FAT" makes an empty data disk with a src/ dir.
+                    </div>
+                </fieldset>
                 <label style="margin-top:10px;"><strong>JSON Output:</strong></label>
                 <pre id="output" style="flex:1; background:#222; color:#adff2f; padding:15px; border-radius:4px; overflow:auto; font-family:monospace; margin:0;">{}</pre>
 
+
+
+
+                <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ccc;">
+
+<div id="config-section" style="flex-shrink: 0; padding-bottom: 20px; display:flex; flex-direction:row; gap:20px; overflow:hidden;">
+
+    <div id="config-keys" style="flex:1; display:flex; flex-direction:column; border:1px solid #eee; border-radius:4px; overflow:auto;">
+        <div class="spreadsheet" style="width:100%; border-collapse: collapse; font-family:sans-serif;">
+            <div class="row section-head"><div class="cell" colspan="2">Build Configuration</div></div>
+            <div id="dynamic-config-container" style="flex:1; overflow:auto; padding:10px;">
+                <div style="color:#999; font-size:0.85em; text-align:center; padding:20px; background:#fafafa;">
+                    Select a source test to view build config
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="config-inventory" style="flex:1; display:flex; flex-direction:column; border:1px solid #eee; border-radius:4px; overflow:auto;">
+        <div class="spreadsheet">
+            <div class="row section-head"><div class="cell" colspan="2">Disk Inventory Check</div></div>
+            <div class="row">
+                <div class="cell" id="file-check-status" style="padding: 10px;">
+                    <div style="color: #999;">Waiting for selection...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<div id="config-dir" style="display:flex; flex-direction:column; margin-top:10px;">
+    <label style="margin-bottom:5px;"><strong>Structure/Paths (Read-only):</strong></label>
+    <textarea id="structure-display" readonly
+              style="height: 150px; width:100%; background:#f9f9f9; font-family:monospace; font-size:0.8em; border:1px solid #ccc; border-radius:4px; padding:10px; box-sizing:border-box; overflow:auto;"></textarea>
+</div>
+
+<style>
+    .spreadsheet { display: table; width: 100%; border-collapse: collapse; font-family: sans-serif; }
+    .row { display: table-row; border-bottom: 1px solid #eee; }
+    .cell { display: table-cell; padding: 8px; vertical-align: middle; }
+    .label-cell { width: 30%; font-weight: bold; color: #444; font-size: 0.85em; background: #fafafa; border-right: 1px solid #eee; }
+    .section-head { background: #e9ecef; font-weight: bold; font-size: 0.8em; text-transform: uppercase; letter-spacing: 1px; }
+    .spreadsheet input { width: 100%; padding: 4px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 3px; }
+    .json-preview { width: 100%; height: 120px; font-family: monospace; font-size: 0.8em; background: #f4f4f4; }
+    .file-list { list-style: none; padding: 0; margin: 0; font-family: monospace; font-size: 0.9em; }
+    .file-item { padding: 2px 0; }
+    .match { color: green; font-weight: bold; }
+    .no-match { color: #888; }
+</style>
+
+
+
+
+<style>
+    .spreadsheet { display: table; width: 100%; border-collapse: collapse; background: white; }
+    .row { display: table-row; border-bottom: 1px solid #eee; }
+    .cell { display: table-cell; padding: 6px 10px; vertical-align: middle; }
+    .label-cell { width: 35%; font-weight: bold; color: #555; font-size: 0.8em; background: #f8f9fa; border-right: 1px solid #eee; }
+    .spreadsheet input { width: 100%; padding: 4px; font-size: 0.85em; border: 1px solid #ddd; border-radius: 2px; }
+</style>
             </div>
         </div>
     </div>
@@ -197,345 +435,1579 @@
 
 
 <script>
-let currentSelectedAction = null;
-const initialTestId = "{{ initial_testid or '' }}";
-const schema = {{ schema|tojson }};
-let steps = [];
-let selectedIndex = null;
-let allTestData = [];
+const State = {
+    currentSelectedAction: null,
+    initialTestId: "{{ initial_testid or '' }}",
+    schema: {{ schema|tojson }},
+    steps: [],
+    selectedIndex: null,
+    allTestData: [],
+    currentConfig: {},
+    injectedKeys: new Set(),
 
-const insertLabel = document.getElementById("insertLabel");
-const moveTarget = document.getElementById("moveTarget");
-const testListSel = document.getElementById("testlist");
+    // Step param validation (mirrors clonetool's Step 4 mechanism)
+    stepParamFixes:  {},   // { [stepIndex]: { [oldKey]: newKey | '' } }
+    stepValueFixes:  {},   // { [stepIndex]: { [key]: newValue } }
+    stepActionFixes: {},   // { [stepIndex]: newActionName }
+    autoFixedParams:     new Set(),  // "stepIndex:oldKey"
+    suppressedAutoFixes: new Set(),  // "stepIndex:oldKey"
+    sigErrors: false,
+    lastDriverScan: null   // cached result from most recent /api/scan_drivers call
+};
 
-testListSel.addEventListener('change', updateFields);
+// Known legacy -> current dispatch-arg renames for step params.
+// Mirrors KNOWN_STEP_PARAM_FIXES in cloneproj.html / repair_config.py
+// so the same auto-repair applies whether a test is being cloned or
+// hand-edited here. `null` means "drop the param".
+const KNOWN_STEP_PARAM_FIXES = {
+    test_compiletheprogram: {
+        d64_drive8_file: 'd64_path',
+        d64_file:        null,
+    },
+};
+
+const DOM = {
+    insertLabel: document.getElementById("insertLabel"),
+    moveTarget: document.getElementById("moveTarget"),
+    testListSel: document.getElementById("testlist"),
+    actionList: document.getElementById("action-list"),
+    actionSearch: document.getElementById("action-search"),
+    paramTableBody: document.querySelector("#param-table tbody"),
+    configContainer: document.getElementById('dynamic-config-container'),
+    structureDisplay: document.getElementById('structure-display'),
+    systemFilter: document.getElementById('system-filter'),
+    output: document.getElementById("output"),
+    stepsContainer: document.getElementById("steps"),
+    statusDiv: document.getElementById('file-check-status'),
+    sigPanel: document.getElementById('sig-panel'),
+    stepFixes: document.getElementById('step-fixes'),
+    driverHint: document.getElementById('driver-hint'),
+    driverHintBody: document.getElementById('driver-hint-body'),
+    showAllActions: document.getElementById('show-all-actions'),
+    backendFilterLabel: document.getElementById('backend-filter-label'),
+    description: document.getElementById('test-description'),
+    descriptionStatus: document.getElementById('description-status'),
+    stepDescription: document.getElementById('step-description'),
+    tags: document.getElementById('test-tags'),
+    tagsStatus: document.getElementById('tags-status'),
+    testSearch: document.getElementById('test-search')
+};
+
+/* --- Backend/emulator grouping for the action picker ---
+   Every "test_start*" action identifies which backend a test is driving.
+   Other actions are either exclusive to one (or a couple of) backend(s), or
+   universal (terminate_all, ocrwordsearch, hostbuild, file checks, etc.) —
+   anything not listed below is treated as universal and always shown, since
+   an unrecognized action (e.g. from a project with its own dispatch_functions.py,
+   such as a VICE/Hatari one) is safer to show than to silently hide. */
+const BACKEND_START_ACTIONS = {
+    test_startqemu:      'qemu',
+    test_start_basilisk:  'basilisk',
+    test_startnovasimh:   'novasimh',
+    test_start_dosbox:    'dosbox_86box',
+    test_start_86box:     'dosbox_86box',
+    test_start_vice:      'vice',
+    test_start_hatari:    'hatari',
+};
+
+const BACKEND_ACTION_GROUPS = {
+    qemu: [
+        'test_startqemu', 'test_dirandfilesto_hddimg', 'test_convert_hddimg_to_hddqcow',
+        'test_flatten_qcow_to_raw', 'test_assert_screen_size', 'test_audio_tonecheck',
+        'test_audio_tonesequence', 'test_mouseaction', 'test_findbutton_click',
+        'test_find_and_open_icon', 'test_closeallwindows',
+    ],
+    basilisk: ['test_start_basilisk'],
+    novasimh: ['test_startnovasimh', 'test_sendnovacommand', 'test_novascreensearch'],
+    dosbox_86box: [
+        'test_dosbox_conf', 'test_start_dosbox', 'test_start_86box',
+        'test_sendcommand', 'test_screensearch',
+    ],
+    // Shared between QEMU and Basilisk (Basilisk registers a qemu1 alias so
+    // these interoperate unchanged — see the qemuflask-testlist-api skill).
+    qemu_basilisk: ['test_sendkeyboardinput', 'test_sendspecialkey', 'test_sendspecialkeys'],
+};
+
+// action name -> backend group, built from BACKEND_ACTION_GROUPS above
+const ACTION_TO_GROUP = {};
+Object.entries(BACKEND_ACTION_GROUPS).forEach(([group, actions]) => {
+    actions.forEach(a => { ACTION_TO_GROUP[a] = group; });
+});
+
+// Does `group` (the currently detected test backend) permit showing an
+// action tagged with `actionGroup`? Handles the two-backend shared groups.
+function groupAllows(actionGroup, group) {
+    if (actionGroup === group) return true;
+    if (actionGroup === 'qemu_basilisk') return group === 'qemu' || group === 'basilisk';
+    if (actionGroup === 'dosbox_86box') return group === 'dosbox_86box';
+    return false;
+}
+
+// Inspect State.steps for a test_start* action to figure out which backend
+// the currently loaded test drives. Returns null if undetermined (no steps
+// yet, or a start action we don't recognize) — filtering is skipped then.
+function detectTestBackend() {
+    for (const step of State.steps || []) {
+        const group = BACKEND_START_ACTIONS[step.action];
+        if (group) return group;
+    }
+    return null;
+}
+
+/* --- Initialization --- */
+
+function init() {
+    buildActionList();
+    loadTests();
+    setupEventListeners();
+    render();
+}
+
+function setupEventListeners() {
+    DOM.testListSel.addEventListener('change', () => {
+        updateFields();
+        // fetchBuildConfig removed — updateFields handles both now
+    });
+    DOM.actionSearch.addEventListener('input', filterActions);
+    DOM.systemFilter.addEventListener('change', (e) => renderTests(e.target.value));
+}
+
+/* --- Action & Schema Logic --- */
 
 function buildActionList() {
-    const listContainer = document.getElementById("action-list");
-    listContainer.innerHTML = "";
-
-    Object.keys(schema).sort().forEach(function (k) {
+    DOM.actionList.innerHTML = "";
+    Object.keys(State.schema).sort().forEach(k => {
         const item = document.createElement("div");
         item.className = "action-item";
         item.textContent = k;
         item.setAttribute("role", "option");
-        item.setAttribute("data-action", k);
-        
-        item.onclick = function() {
-            selectAction(k, item);
-        };
-        
-        listContainer.appendChild(item);
+        item.onclick = () => selectAction(k, item);
+        DOM.actionList.appendChild(item);
     });
 }
 
 function selectAction(actionName, element) {
     document.querySelectorAll('.action-item').forEach(el => el.classList.remove('active'));
     
-    if (element) {
-        element.classList.add('active');
-    } else {
-        const found = Array.from(document.querySelectorAll('.action-item'))
-                           .find(el => el.textContent === actionName);
-        if (found) {
-            found.classList.add('active');
-            found.scrollIntoView({ block: 'nearest' });
-        }
+    if (!element) {
+        element = Array.from(document.querySelectorAll('.action-item'))
+                      .find(el => el.textContent === actionName);
     }
 
-    currentSelectedAction = actionName;
-    const actionData = schema[actionName] || {};
-    renderParamTable(actionData, {});
+    if (element) {
+        element.classList.add('active');
+        element.scrollIntoView({ block: 'nearest' });
+    }
+
+    State.currentSelectedAction = actionName;
+    renderParamTable(State.schema[actionName] || {}, {});
+
+    // Show driver hint whenever the compile action is selected
+    if (actionName === 'test_compiletheprogram') {
+        scanDrivers();
+    } else {
+        hideDriverHint();
+    }
 }
 
 function filterActions() {
-    const query = document.getElementById("action-search").value.toLowerCase();
+    const query = DOM.actionSearch.value.toLowerCase();
+    const showAll = DOM.showAllActions && DOM.showAllActions.checked;
+    const backend = detectTestBackend();
+
+    if (DOM.backendFilterLabel) {
+        DOM.backendFilterLabel.textContent = (!showAll && backend)
+            ? `Showing: ${backend.replace('_', '/')} + universal steps`
+            : '';
+    }
+
     document.querySelectorAll('.action-item').forEach(item => {
-        const text = item.textContent.toLowerCase();
-        item.style.display = text.includes(query) ? "block" : "none";
+        const name = item.textContent;
+        const text = name.toLowerCase();
+        const matchesQuery = text.includes(query);
+
+        let matchesBackend = true;
+        if (!showAll && backend) {
+            const actionGroup = ACTION_TO_GROUP[name];
+            // No group entry = universal/unrecognized action, always shown.
+            matchesBackend = !actionGroup || groupAllows(actionGroup, backend);
+        }
+
+        item.style.display = (matchesQuery && matchesBackend) ? "block" : "none";
     });
 }
 
-function loadTests() {
-    fetch('/testfile_list')
-        .then(r => r.json())
-        .then(data => {
-            allTestData = data;
-            const systemFilter = document.getElementById('system-filter');
-            const systemsSet = new Set();
-            
-            data.forEach(item => {
-                if (item.system) {
-                    systemsSet.add(item.system);
-                }
-            });
+/* --- Test & Config Data Fetching --- */
 
-            const sortedSystems = Array.from(systemsSet).sort((a, b) => a.localeCompare(b));
-            sortedSystems.forEach(sys => {
-                const opt = document.createElement('option');
-                opt.value = sys;
-                opt.textContent = sys;
-                systemFilter.appendChild(opt);
-            });
+async function loadTests() {
+    try {
+        const r = await fetch('/api/v1/tests');
+        // NB: `id` is deliberately the display name here - renderTests() uses
+        // it as the dropdown label. Keep the slug that /api/v1/tests actually
+        // hands out under `slug`: the deep-link matcher below needs it, and
+        // overwriting it with the display name made every deep link miss.
+        const data = (await r.json()).data.tests.map(t => ({
+            id: t.display_name, display_name: t.display_name, module: t.module,
+            slug: t.id,
+            types: t.types, system: t.system, platform: t.platform,
+            description: t.description || '', tags: t.tags || [],
+            latest_status: t.latest_status
+        }));
+        State.allTestData = data;
 
-            renderTests('all');
-
-            if (initialTestId) {
-                const targetTest = allTestData.find(t => t.id === initialTestId || t.module === initialTestId);
-                if (targetTest) {
-                    testListSel.value = targetTest.module;
-                    updateFields();
-                }
-            }
+        const systems = [...new Set(data.map(i => i.system).filter(Boolean))].sort();
+        systems.forEach(sys => {
+            const opt = new Option(sys, sys);
+            DOM.systemFilter.add(opt);
         });
+
+        renderTests('all');
+
+        if (State.initialTestId) {
+            // Match every id form a deep link can arrive as: the slug from
+            // /api/v1/tests (what the Flask route normalises to), the module
+            // dot-path, or the display name.
+            const target = data.find(t => t.slug === State.initialTestId
+                                       || t.module === State.initialTestId
+                                       || t.id === State.initialTestId);
+            if (target) {
+                DOM.testListSel.value = target.module;
+                updateFields();  // handles both steps and config now
+            }
+        }
+    } catch (e) {
+        console.error("Failed to load tests", e);
+    }
+}
+
+async function fetchBuildConfig(testModule) {
+    if (!testModule) return;
+    try {
+        const r = await fetch(`/api/v1/tests/${encodeURIComponent(testModule)}`);
+        const res = await r.json();
+        if (res.data && res.data.config) {
+            State.currentConfig = res.data.config;
+            renderConfigEditor(res.data.config);
+            injectMissingParamKeys();  // <-- add this
+            verifyDisk();
+        }
+    } catch (e) {
+        console.error("Config load error:", e);
+    }
+}
+
+/* --- UI Rendering --- */
+
+/* The description box is a plain CONFIG key ("description") with its own
+   editor: it is prose about why the test exists, which is unreadable in the
+   one-line key/value grid the rest of CONFIG uses. It rides along in
+   build_config on save like every other key -- no separate write path. */
+function renderDescription(text) {
+    if (!DOM.description) return;
+    DOM.description.value = (text === null || text === undefined) ? '' : String(text);
+    if (DOM.descriptionStatus) DOM.descriptionStatus.textContent = '';
+}
+
+function onDescriptionInput() {
+    State.currentConfig.description = DOM.description.value;
+    if (DOM.descriptionStatus) {
+        DOM.descriptionStatus.textContent = 'unsaved — click Save & Sync';
+        DOM.descriptionStatus.style.color = '#c0392b';
+    }
+}
+window.onDescriptionInput = onDescriptionInput;
+
+// Tags are edited as one comma-separated text field but stored (and sent to
+// the server) as a real array -- CONFIG["tags"] round-trips as a Python list,
+// same shape prom_env/extra_disks use elsewhere in this file.
+function renderTags(tags) {
+    if (!DOM.tags) return;
+    DOM.tags.value = Array.isArray(tags) ? tags.join(', ') : (tags || '');
+    if (DOM.tagsStatus) DOM.tagsStatus.textContent = '';
+}
+
+function onTagsInput() {
+    State.currentConfig.tags = DOM.tags.value.split(',')
+        .map(t => t.trim()).filter(Boolean);
+    if (DOM.tagsStatus) {
+        DOM.tagsStatus.textContent = 'unsaved — click Save & Sync';
+        DOM.tagsStatus.style.color = '#c0392b';
+    }
+}
+window.onTagsInput = onTagsInput;
+
+function renderConfigEditor(config) {
+    DOM.configContainer.innerHTML = '';
+    const metaKeys = ['structure', 'steps', 'paths', 'description', 'tags'];
+    const viewOnly = {};
+
+    const originalKeys = [];
+    const injectedKeys = [];
+
+    Object.keys(config).sort().forEach(key => {
+        if (metaKeys.includes(key)) { viewOnly[key] = config[key]; return; }
+        if (key.startsWith('_')) return;
+        if (State.injectedKeys.has(key)) injectedKeys.push(key);
+        else originalKeys.push(key);
+    });
+
+    function makeRow(key, isInjected) {
+        const val = config[key];
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.style.cssText = isInjected ? 'background:#fff5f5;' : '';
+        row.innerHTML = `
+            <div class="cell label-cell" style="display:flex; align-items:center; gap:6px;">
+                ${isInjected 
+                    ? `<span title="Auto-detected missing key" style="
+                        display:inline-block; width:8px; height:8px; min-width:8px;
+                        background:red; border-radius:50%;"></span>` 
+                    : `<span style="display:inline-block; width:8px; height:8px; min-width:8px;"></span>`
+                }
+                <span style="${isInjected ? 'color:#c0392b; font-style:italic;' : ''}">${key}</span>
+            </div>
+            <div class="cell">
+                <input type="text" class="config-field" data-key="${key}"
+                    placeholder="${isInjected ? 'missing — fill in or leave blank' : ''}"
+                    value='${(typeof val === 'object' && val !== null) ? JSON.stringify(val) : (val ?? "")}'>
+            </div>`;
+        row.querySelector('input').addEventListener('input', (e) => {
+            State.currentConfig[key] = e.target.value;
+        });
+        return row;
+    }
+
+    originalKeys.forEach(key => DOM.configContainer.appendChild(makeRow(key, false)));
+
+    if (injectedKeys.length) {
+        const divider = document.createElement('div');
+        divider.style.cssText = 'padding:6px 10px; background:#fdecea; color:#c0392b; font-size:0.75em; font-weight:bold; text-transform:uppercase; letter-spacing:0.5px; border-top:1px solid #f5c6cb; border-bottom:1px solid #f5c6cb; margin-top:6px;';
+        divider.textContent = '⚠ Auto-detected — not yet in config file';
+        DOM.configContainer.appendChild(divider);
+
+        // Group by action prefix (everything before the first dot)
+        const groups = {};
+        injectedKeys.forEach(key => {
+            const dot = key.indexOf('.');
+            const group = dot !== -1 ? key.slice(0, dot) : key;
+            if (!groups[group]) groups[group] = [];
+            groups[group].push(key);
+        });
+
+        Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)).forEach(([groupName, keys]) => {
+            // Group header row
+            const header = document.createElement('div');
+            header.style.cssText = 'padding:5px 10px; background:#fdf0f0; color:#922; font-size:0.8em; font-weight:bold; border-top:1px solid #f5c6cb; font-family:monospace;';
+            header.textContent = `▸ ${groupName}`;
+            DOM.configContainer.appendChild(header);
+
+            // Indented key rows under this group
+            keys.sort().forEach(key => {
+                const shortKey = key.slice(key.indexOf('.') + 1); // just the param part
+                const val = config[key];
+                const row = document.createElement('div');
+                row.className = 'row';
+                row.style.cssText = 'background:#fff8f8;';
+                row.innerHTML = `
+                    <div class="cell label-cell" style="display:flex; align-items:center; gap:6px; padding-left:20px;">
+                        <span title="Missing key" style="display:inline-block; width:7px; height:7px; min-width:7px; background:red; border-radius:50%;"></span>
+                        <span style="color:#c0392b; font-style:italic; font-family:monospace;">${shortKey}</span>
+                    </div>
+                    <div class="cell">
+                        <input type="text" class="config-field" data-key="${key}"
+                            placeholder="missing — fill in or leave blank"
+                            value='${(typeof val === 'object' && val !== null) ? JSON.stringify(val) : (val ?? "")}'>
+                    </div>`;
+                row.querySelector('input').addEventListener('input', (e) => {
+                    State.currentConfig[key] = e.target.value;
+                });
+                DOM.configContainer.appendChild(row);
+            });
+        });
+    }
+    DOM.structureDisplay.value = JSON.stringify(viewOnly, null, 4);
 }
 
 function renderTests(filter) {
-    const testListSel = document.getElementById("testlist");
-    testListSel.innerHTML = "<option value=''>-- Select a Test --</option>";
-    
-    const filtered = filter === 'all' 
-        ? allTestData 
-        : allTestData.filter(t => t.system === filter);
+    DOM.testListSel.innerHTML = "<option value=''>-- Select a Test --</option>";
+    let filtered = filter === 'all' 
+        ? State.allTestData 
+        : State.allTestData.filter(t => t.system === filter);
+
+    // Search box matches test name, tags, or description -- so "floppy" finds
+    // both a test named for it and one that just tags itself with it.
+    const query = (DOM.testSearch ? DOM.testSearch.value : '').trim().toLowerCase();
+    if (query) {
+        filtered = filtered.filter(t =>
+            (t.id || '').toLowerCase().includes(query)
+            || (t.description || '').toLowerCase().includes(query)
+            || (t.tags || []).some(tag => tag.toLowerCase().includes(query)));
+    }
 
     filtered.sort((a, b) => (a.id || "").localeCompare(b.id || ""));
-
     filtered.forEach(test => {
-        const opt = document.createElement("option");
-        opt.value = test.module;
         const typeKeys = Object.keys(test.types || {});
-        const typeString = typeKeys.length > 0 ? " [" + typeKeys.join(", ") + "]" : "";
-        opt.textContent = (test.id || "Unknown") + typeString;
-        testListSel.appendChild(opt);
+        const typeStr = typeKeys.length ? ` [${typeKeys.join(", ")}]` : "";
+        const tagStr = (test.tags || []).length ? ` (${test.tags.join(', ')})` : "";
+        const opt = new Option((test.id || "Unknown") + typeStr + tagStr, test.module);
+        if (test.description) opt.title = test.description;
+        DOM.testListSel.add(opt);
     });
 }
 
-function updateFields() {
-    const testSlug = document.getElementById("testlist").value;
-    if (!testSlug) return;
+function renderParamTable(template, current = {}) {
+    DOM.paramTableBody.innerHTML = "";
 
-    fetch(`/api/teststeps/${testSlug}`)
-        .then(r => {
-            if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
-            return r.json();
-        })
-        .then(data => {
-            steps = data;
-            selectedIndex = null;
-            render();
-        })
-        .catch(err => {
-            console.error("Fetch error:", err);
+    // Classify param keys for suggestion logic
+    const PATH_RE   = /(_path|_dir|_file)$/;
+    const TOKEN_RE  = /\{[^}]+\}/;
+
+    // Build a resolved snapshot of State.currentConfig for suggestion matching
+    function resolveToken(tmpl) {
+        if (!tmpl) return '';
+        let s = String(tmpl);
+        for (let i = 0; i < 6; i++) {
+            const prev = s;
+            s = s.replace(/\{([^}]+)\}/g, (m, k) =>
+                (k in State.currentConfig) ? String(State.currentConfig[k]) : m);
+            if (s === prev) break;
+        }
+        return s;
+    }
+
+    // For a param key, return ranked {token} suggestions from State.currentConfig
+    function suggestTokens(paramKey, currentVal) {
+        const resolved = resolveToken(currentVal || '');
+        const isPath   = PATH_RE.test(paramKey);
+        const cfg      = State.currentConfig;
+        const results  = [];
+
+        // Instance-name param special case — offer the names of the emulator
+        // instances this testlist starts. Each start step maps to one instance:
+        // if the start step set an explicit name (e.g. "vice1_rx") offer that,
+        // otherwise fall back to the auto name next_vice_instance assigns by
+        // run order (vice1, vice2, ...).
+        if (paramKey === 'name') {
+            const startActions = new Set(['test_emulator_start', 'test_startviceemulator', 'test_hatari_start']);
+            const starters = (State.steps || []).filter(s => startActions.has(s.action));
+            const seen = new Set();
+            starters.forEach((s, idx) => {
+                const explicit = s.param && s.param.name ? String(s.param.name).trim() : '';
+                const nm = explicit || `vice${idx + 1}`;
+                if (seen.has(nm)) return;
+                seen.add(nm);
+                results.push({
+                    token: nm,
+                    resolved: explicit ? `instance #${idx + 1} (named)` : `VICE instance #${idx + 1}`,
+                    score: 100
+                });
+            });
+            if (!results.length) results.push({ token: 'vice1', resolved: 'VICE instance #1', score: 100 });
+            return results.slice(0, 8);
+        }
+
+        // Driver param special case — inject from last filesystem scan
+        // so brand-new steps and tests without a config loaded can still
+        // find driver files without needing repair_config to have run first.
+        const driverPathRE  = /^driver(\d+)_path$/;
+        const driverLabelRE = /^driver(\d+)_label$/;
+        const driverScan    = State.lastDriverScan;
+
+        if (driverScan && driverScan.drivers && driverScan.drivers.length) {
+            const pathM  = paramKey.match(driverPathRE);
+            const labelM = paramKey.match(driverLabelRE);
+            if (pathM || labelM) {
+                const slotIdx = Number((pathM || labelM)[1]) - 1;  // driver1 → index 0
+                const drv = driverScan.drivers[slotIdx];
+                if (drv) {
+                    if (pathM) {
+                        results.push({
+                            token:    drv.path_token,
+                            resolved: `${driverScan.src_dir}/${drv.filename}`,
+                            score:    100
+                        });
+                    } else {
+                        results.push({
+                            token:    drv.label,
+                            resolved: `co65 label → _${drv.label.replace(/-/g,'_')}`,
+                            score:    100
+                        });
+                    }
+                }
+            }
+        }
+
+        Object.keys(cfg).forEach(ck => {
+            const raw = cfg[ck];
+            if (typeof raw !== 'string' || !raw) return;
+            const res = resolveToken(raw);
+            if (!res || TOKEN_RE.test(res)) return;  // skip unresolved
+
+            // Direct name match — highest priority
+            if (ck === paramKey || ck === paramKey.replace(/_path$/, '') + '_file'
+                                || ck === paramKey.replace(/_file$/, '') + '_path') {
+                results.push({ token: `{${ck}}`, resolved: res, score: 100 });
+                return;
+            }
+
+            // Config key directly named driver1_path / driver1_label
+            if (ck === paramKey) {
+                results.push({ token: `{${ck}}`, resolved: res, score: 90 });
+                return;
+            }
+
+            if (isPath) {
+                // Path param: offer config keys whose resolved value is an absolute path
+                if (res.startsWith('/')) {
+                    const paramStem = paramKey.replace(/(_path|_dir|_file)$/, '');
+                    const score = ck.includes(paramStem) ? 80
+                                : res.includes('output')  ? 50
+                                : res.includes('src')     ? 45
+                                : 30;
+                    results.push({ token: `{${ck}}`, resolved: res, score });
+                }
+            } else {
+                // Scalar param: only suggest if the config key name overlaps
+                if (ck === paramKey || ck.includes(paramKey) || paramKey.includes(ck)) {
+                    results.push({ token: `{${ck}}`, resolved: res, score: 70 });
+                }
+            }
         });
+
+        // Deduplicate by token, sort by score desc, cap at 6
+        const seen = new Set();
+        return results
+            .filter(r => { if (seen.has(r.token)) return false; seen.add(r.token); return true; })
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 6);
+    }
+
+    // Build suggestion dropdown HTML for a param input
+    function makeSuggestionDropdown(paramKey, inputId) {
+        const dropId = `sugg_${inputId}`;
+        return `<div id="${dropId}" class="param-suggestions" style="display:none;
+            position:absolute; z-index:200; background:#fff; border:1px solid #ccc;
+            border-radius:3px; box-shadow:0 2px 8px rgba(0,0,0,.15);
+            font-family:monospace; font-size:0.82em; max-height:220px; overflow-y:auto;
+            min-width:320px; left:0; top:100%;"></div>`;
+    }
+
+    function showSuggestions(paramKey, inputEl) {
+        const dropId = `sugg_p_${paramKey}`;
+        const drop = document.getElementById(dropId);
+        if (!drop) return;
+
+        const driverParamRE = /^driver\d+_(path|label)$/;
+
+        // For driver params: if we have no scan result yet, run one first
+        if (driverParamRE.test(paramKey) && !State.lastDriverScan
+                && Object.keys(State.currentConfig).length) {
+            scanDrivers().then(() => _renderSuggestions(paramKey, inputEl, drop));
+            return;
+        }
+
+        _renderSuggestions(paramKey, inputEl, drop);
+    }
+
+    function _renderSuggestions(paramKey, inputEl, drop) {
+        const val  = inputEl.value;
+        const sugg = suggestTokens(paramKey, val);
+
+        if (!sugg.length) { drop.style.display = 'none'; return; }
+
+        drop.innerHTML = sugg.map(s =>
+            `<div class="param-sugg-item" style="padding:5px 10px; cursor:pointer;
+                border-bottom:1px solid #f0f0f0; display:flex; gap:8px; align-items:baseline;"
+                onmousedown="event.preventDefault(); applySuggestion('p_${paramKey}', '${escHtml(s.token)}')">
+                <strong style="flex-shrink:0; color:#007bff;">${escHtml(s.token)}</strong>
+                <span style="color:#888; font-size:0.9em; overflow:hidden; text-overflow:ellipsis;
+                    white-space:nowrap;" title="${escHtml(s.resolved)}">${escHtml(s.resolved)}</span>
+            </div>`
+        ).join('');
+        drop.style.display = 'block';
+    }
+
+    // A param whose schema default is a real boolean (takeascreenshot,
+    // require_success, hdd2_prepare, ...) gets a checkbox rather than a text
+    // box you have to type "True" into. Config files store these as bare
+    // Python booleans, but a hand-edited one can hold the string
+    // "True"/"false", so coerce both on the way in.
+    function isBoolParam(schemaDefault) {
+        return typeof schemaDefault === 'boolean';
+    }
+    function asBool(v) {
+        if (typeof v === 'boolean') return v;
+        return ['1', 'true', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase());
+    }
+
+    Object.keys(template).forEach(key => {
+        const schemaDefault = template[key];
+        const currentVal    = (key in current) ? current[key] : schemaDefault;
+        const inputId       = `p_${key}`;
+        const isPath        = PATH_RE.test(key);
+
+        if (isBoolParam(schemaDefault)) {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td><label for="${inputId}">${escHtml(key)}</label></td>
+                <td>
+                    <input type="checkbox" id="${inputId}" data-param-key="${key}"
+                        data-param-bool="1" ${asBool(currentVal) ? 'checked' : ''}
+                        style="width:auto;">
+                    <span style="color:#888; font-size:0.85em; margin-left:6px;">default ${schemaDefault ? 'on' : 'off'}</span>
+                </td>`;
+            DOM.paramTableBody.appendChild(tr);
+            return;
+        }
+
+        // Decide display value: use currentVal if set, else empty (let placeholder guide)
+        const displayVal = (currentVal !== null && currentVal !== undefined
+            && String(currentVal) !== 'None' && String(currentVal) !== '')
+            ? currentVal : '';
+
+        // Placeholder: schema default for non-path; hint for path
+        const placeholder = isPath
+            ? 'e.g. {src}file.ext or {d64_drive8_file}'
+            : (schemaDefault !== null && schemaDefault !== undefined
+               && String(schemaDefault) !== '' ? String(schemaDefault) : '');
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td><label for="${inputId}">${escHtml(key)}</label></td>
+            <td style="position:relative;">
+                <input type="text" id="${inputId}" data-param-key="${key}"
+                    value="${escHtml(String(displayVal))}"
+                    placeholder="${escHtml(placeholder)}"
+                    autocomplete="off"
+                    style="width:100%; box-sizing:border-box; padding-right:22px;">
+                ${makeSuggestionDropdown(key, inputId)}
+            </td>`;
+
+        const input = tr.querySelector('input');
+
+        input.addEventListener('focus', () => showSuggestions(key, input));
+        input.addEventListener('input', () => showSuggestions(key, input));
+        input.addEventListener('blur',  () => {
+            // Small delay so onmousedown on a suggestion fires first
+            setTimeout(() => {
+                const drop = document.getElementById(`sugg_p_${key}`);
+                if (drop) drop.style.display = 'none';
+            }, 150);
+        });
+
+        DOM.paramTableBody.appendChild(tr);
+    });
 }
 
-function createStepObject() {
-    return {
-        action: currentSelectedAction,
-        param: getParamValuesFromTable(),
-        subaction: "" 
-    };
+function applySuggestion(inputId, token) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.value = token;
+    input.dispatchEvent(new Event('input'));
+    const drop = input.parentElement.querySelector('.param-suggestions');
+    if (drop) drop.style.display = 'none';
+}
+window.applySuggestion = applySuggestion;
+
+
+/* --- Step Management --- */
+
+function updateFields() {
+    const slug = DOM.testListSel.value;
+    if (!slug) return;
+    document.getElementById('view-detail-btn').disabled = false;
+    State.injectedKeys.clear();
+    State.currentConfig = {};  // clear stale config from previous selection
+    renderDescription('');
+    renderTags([]);
+
+    // Reset step param validation state for the newly selected test
+    State.stepParamFixes  = {};
+    State.stepValueFixes  = {};
+    State.stepActionFixes = {};
+    State.autoFixedParams     = new Set();
+    State.suppressedAutoFixes = new Set();
+
+    const stepsPromise = fetch(`/api/v1/tests/${slug}/steps`)
+        .then(r => r.json())
+        .then(data => {
+            State.steps = data.data.steps;
+            State.selectedIndex = null;
+            render();
+        });
+
+    const configPromise = fetch(`/api/v1/tests/${encodeURIComponent(slug)}`)
+        .then(r => r.json())
+        .then(res => {
+            if (res.data && res.data.config) {
+                State.currentConfig = res.data.config;
+                renderDescription(res.data.config.description);
+                renderTags(res.data.config.tags);
+                renderConfigEditor(res.data.config);
+                verifyDisk();
+
+                // Apply step-scoped repairs from repair_config back into
+                // State.steps so that sendSteps() commits the corrected params
+                // (e.g. injected driver1_path, renamed d64_file→d64_path).
+                // State.steps is populated from /api/v1/tests/<id>/steps which
+                // reads the raw file — repair_config's fixes need merging here.
+                const repairs = res.repairs || [];
+                repairs.forEach(r => {
+                    // r.scope is "step/action_name" for step-level repairs
+                    const stepMatch = r.scope && r.scope.match(/^step\/(.+)$/);
+                    if (!stepMatch) return;
+                    const action = stepMatch[1];
+
+                    State.steps.forEach(step => {
+                        if (step.action !== action) return;
+                        const param = step.param || (step.param = {});
+
+                        if (r.kind === 'renamed_param' || r.kind === 'removed_param') {
+                            // Move value from old key to new key (or drop it)
+                            if (r.old in param) {
+                                const val = param[r.old];
+                                delete param[r.old];
+                                if (r.new) param[r.new] = val;
+                            }
+                        } else if (r.kind === 'injected_driver_param'
+                                || r.kind === 'set_default_d64_path'
+                                || r.kind === 'cleared_bare_filename'
+                                || r.kind === 'cleared_wrong_basepath'
+                                || r.kind === 'cleared_stale_projdir') {
+                            // Set or clear the param value
+                            if (r.new === null || r.new === undefined) {
+                                delete param[r.key];
+                            } else {
+                                // Only set if not already present with a real value
+                                const cur = param[r.key];
+                                const isEmpty = cur === null || cur === undefined
+                                    || String(cur).trim().toLowerCase() in
+                                       {'': 1, 'none': 1, 'null': 1};
+                                if (isEmpty) param[r.key] = r.new;
+                            }
+                        }
+                    });
+                });
+            }
+        });
+
+    // Only inject missing keys after BOTH have finished
+    Promise.all([stepsPromise, configPromise]).then(() => {
+        injectMissingParamKeys();
+        runSigCheck();
+        // Pre-scan drivers so lastDriverScan is populated for param suggestions
+        // regardless of which action is currently selected
+        scanDrivers();
+    });
 }
 
 function addStep() {
-    if (!currentSelectedAction) {
-        alert("Select an action first");
-        return;
-    }
-    const newStep = createStepObject();
-    if (selectedIndex === null) {
-        steps.push(newStep);
-    } else {
-        steps.splice(selectedIndex + 1, 0, newStep);
-    }
+    if (!State.currentSelectedAction) return alert("Select an action first");
+    const step = {
+        action: State.currentSelectedAction, param: getParams(), subaction: "",
+        description: getStepDescription(),
+    };
+    if (State.selectedIndex === null) State.steps.push(step);
+    else State.steps.splice(State.selectedIndex + 1, 0, step);
+    renderStepDescription('');
     render();
 }
 
 function updateStep() {
-    if (selectedIndex === null) return;
-    steps[selectedIndex] = createStepObject();
+    if (State.selectedIndex === null) return;
+    // pause_on is toggled by its own checkbox, independent of the action/param
+    // editor -- carry it over rather than letting a normal edit silently
+    // clear it.
+    const pauseOn = State.steps[State.selectedIndex].pause_on;
+    State.steps[State.selectedIndex] = {
+        action: State.currentSelectedAction, param: getParams(), subaction: "",
+        description: getStepDescription(), pause_on: pauseOn,
+    };
     render();
 }
+
+function getStepDescription() {
+    return DOM.stepDescription ? DOM.stepDescription.value : '';
+}
+
+function renderStepDescription(text) {
+    if (DOM.stepDescription) DOM.stepDescription.value = text || '';
+}
+
+// Single save action: folds in whatever step is currently selected (if any),
+// then pushes steps + build config to the server. Replaces the old two-click
+// "Update Selected" -> "Sync to Flask" flow.
+function saveAndSync() {
+    updateStep();
+    sendSteps();
+    verifyDisk();
+}
+window.saveAndSync = saveAndSync;
 
 function selectStep(index) {
-    selectedIndex = (selectedIndex === index) ? null : index;
-    if (selectedIndex !== null) {
-        const s = steps[selectedIndex];
-        selectAction(s.action);
-        renderParamTable(schema[s.action] || {}, s.param);
+    State.selectedIndex = (State.selectedIndex === index) ? null : index;
+    if (State.selectedIndex !== null) {
+        const s = State.steps[State.selectedIndex];
+        selectAction(s.action);   // selectAction already calls scanDrivers if applicable
+        renderParamTable(State.schema[s.action] || {}, s.param);
+        renderStepDescription(s.description);
     } else {
         renderParamTable({}, {});
+        renderStepDescription('');
+        hideDriverHint();
     }
     render();
-}
-
-function renderHighlightedJSON() {
-    const outputPre = document.getElementById("output");
-    const currentTestModule = document.getElementById("testlist").value;
-    const jsonObj = { testid: currentTestModule, steps: steps };
-
-    function renderValue(value, parentKey = null, index = null, depth = 0) {
-        const indent = "  ".repeat(depth);
-        const childIndent = "  ".repeat(depth + 1);
-
-        if (Array.isArray(value)) {
-            if (value.length === 0) return "[]";
-            const items = value.map((v, i) => {
-                const isSelected = (parentKey === "steps" && i === selectedIndex);
-                const valStr = renderValue(v, parentKey, i, depth + 1);
-                const comma = (i === value.length - 1) ? "" : ",";
-                if (isSelected) {
-                    return `<span class="json-highlight">${valStr}</span>${comma}`;
-                }
-                return valStr + comma;
-            });
-            return `[\n${items.join("\n")}\n${indent}]`;
-        } 
-        
-        if (value && typeof value === "object") {
-            const props = Object.keys(value).map(k => {
-                const val = renderValue(value[k], k, null, depth + 1);
-                return `${childIndent}"${k}": ${val}`;
-            });
-            return `{\n${props.join(",\n")}\n${indent}}`;
-        } 
-        
-        if (typeof value === "string") return `"${value}"`;
-        return String(value);
-    }
-
-    outputPre.innerHTML = renderValue(jsonObj, null, null, 0);
 }
 
 function moveStep() {
-    if (selectedIndex === null || steps.length < 2) return;
-    const targetIdx = parseInt(moveTarget.value);
-    const itemToMove = steps.splice(selectedIndex, 1)[0];
-    let adjustedIdx = targetIdx;
-    if (targetIdx > selectedIndex) {
-        adjustedIdx = targetIdx - 1;
-    }
-    steps.splice(adjustedIdx, 0, itemToMove);
-    selectedIndex = adjustedIdx;
+    if (State.selectedIndex === null || State.steps.length < 2) return;
+    const target = parseInt(DOM.moveTarget.value);
+    const item = State.steps.splice(State.selectedIndex, 1)[0];
+    const adjusted = target > State.selectedIndex ? target - 1 : target;
+    State.steps.splice(adjusted, 0, item);
+    State.selectedIndex = adjusted;
     render();
 }
 
-function render() {
-    const stepsDiv = document.getElementById("steps");
-    stepsDiv.innerHTML = "";
-    moveTarget.innerHTML = "";
+/* --- Driver file discovery --- */
 
-    steps.forEach((s, i) => {
+function hideDriverHint() {
+    DOM.driverHint.style.display = 'none';
+    DOM.driverHintBody.innerHTML = '';
+}
+
+async function scanDrivers() {
+    if (!Object.keys(State.currentConfig).length) {
+        hideDriverHint();
+        return;
+    }
+
+    let data;
+    try {
+        const r = await fetch(`/api/v1/tests/${DOM.testListSel.value}/scan-drivers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(State.currentConfig),
+        });
+        data = (await r.json()).data;
+    } catch (e) {
+        hideDriverHint();
+        return;
+    }
+
+    State.lastDriverScan = data;
+
+    if (!data.exists || !data.drivers || data.drivers.length === 0) {
+        hideDriverHint();
+        return;
+    }
+
+    // Build the hint panel — one row per driver file found, with an
+    // "Apply" button that fills driver1_path / driver1_label (or driver2_*
+    // for the second one) into the param table inputs directly.
+    const EXT_LABEL = {
+        '.emd': 'RAM/REU expansion',
+        '.mou': 'Mouse',
+        '.ser': 'Serial',
+        '.joy': 'Joystick',
+        '.tgi': 'Graphics',
+    };
+
+    const rows = data.drivers.map((drv, i) => {
+        const slot     = i === 0 ? 'driver1' : i === 1 ? 'driver2' : null;
+        const slotHtml = slot
+            ? `<button onclick="applyDriverPreset('${escHtml(slot)}','${escHtml(drv.path_token)}','${escHtml(drv.label)}')"
+                       style="margin-left:8px;font-size:0.85em;padding:2px 8px;background:#28a745;color:#fff;border:none;border-radius:3px;cursor:pointer;">
+                   Apply → ${escHtml(slot)}
+               </button>`
+            : `<span style="color:#888;margin-left:8px;font-size:0.85em;">(no slot — add manually)</span>`;
+
+        const typeDesc = EXT_LABEL[drv.ext] || drv.ext;
+
+        return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #e0f0e8;">
+            <span style="color:#888;flex-shrink:0;">${drv.ext}</span>
+            <strong style="flex-shrink:0;">${escHtml(drv.filename)}</strong>
+            <span style="color:#555;flex:1;">${typeDesc}</span>
+            <code style="color:#333;flex-shrink:0;">${escHtml(drv.path_token)}</code>
+            <code style="color:#666;flex-shrink:0;">label: ${escHtml(drv.label)}</code>
+            ${slotHtml}
+        </div>`;
+    }).join('');
+
+    DOM.driverHintBody.innerHTML = rows +
+        `<div style="color:#666;font-size:0.9em;padding-top:6px;">
+            Src: <code>${escHtml(data.src_dir)}</code>
+            — "Apply" fills the matching driver path/label param fields below.
+         </div>`;
+    DOM.driverHint.style.display = 'block';
+}
+
+function applyDriverPreset(slot, pathToken, label) {
+    // Fill the corresponding driver*_path and driver*_label inputs in the
+    // param table. If those inputs don't exist yet (the param table was
+    // rendered from the schema without those keys), inject them first.
+    const pathKey  = `${slot}_path`;
+    const labelKey = `${slot}_label`;
+
+    function setOrInjectInput(key, value) {
+        let input = DOM.paramTableBody.querySelector(`input[data-param-key="${key}"]`);
+        if (!input) {
+            // Row doesn't exist yet — add it so the user can see what was set
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><label for="p_${key}">${key}</label></td>
+                <td><input type="text" id="p_${key}" data-param-key="${key}" value="">  </td>`;
+            DOM.paramTableBody.appendChild(tr);
+            input = DOM.paramTableBody.querySelector(`input[data-param-key="${key}"]`);
+        }
+        input.value = value;
+        // Flash green to signal the field was filled
+        input.style.background = '#d4edda';
+        setTimeout(() => { input.style.background = ''; }, 1200);
+    }
+
+    setOrInjectInput(pathKey,  pathToken);
+    setOrInjectInput(labelKey, label);
+}
+
+window.applyDriverPreset = applyDriverPreset;
+
+/* --- Step param validation (mirrors clonetool's mechanism) --- */
+
+function getResolvedVars() {
+    // Best-effort var map for resolving {tokens} in step params — same
+    // approach as clonetool: start from currentConfig, then resolve any
+    // top-level template strings into themselves.
+    const vars = { ...State.currentConfig };
+    const TOKEN_RE = /\{[^}]+\}/;
+    const resolveStr = (tmpl, map, passes = 6) => {
+        let s = String(tmpl);
+        for (let i = 0; i < passes; i++) {
+            const prev = s;
+            s = s.replace(/\{([^}]+)\}/g, (m, k) => (k in map) ? String(map[k]) : m);
+            if (s === prev) break;
+        }
+        return s;
+    };
+    Object.keys(vars).forEach(k => {
+        if (typeof vars[k] === 'string' && TOKEN_RE.test(vars[k])) {
+            vars[k] = resolveStr(vars[k], vars);
+        }
+    });
+    return vars;
+}
+
+function runSigCheck(skipAutoFix = false) {
+    if (!State.steps || !State.steps.length) {
+        DOM.sigPanel.innerHTML = '<div class="sig-loading">No steps to check.</div>';
+        renderStepFixesPanel();
+        return;
+    }
+
+    DOM.sigPanel.innerHTML = '<div class="sig-loading">Checking step params against dispatch signatures…</div>';
+    State.sigErrors = false;
+
+    const vars = getResolvedVars();
+    const config = { ...State.currentConfig, steps: getFixedSteps() };
+
+    fetch(`/api/v1/tests/${DOM.testListSel.value}/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config, resolved_vars: vars }),
+    })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.data) {
+                DOM.sigPanel.innerHTML = `<div class="sig-loading" style="color:#dc3545">
+                    Could not load dispatch: ${escHtml((res.error && res.error.message) || '')}</div>`;
+                State.sigErrors = false;
+                renderStepFixesPanel();
+                return;
+            }
+
+            if (!skipAutoFix && autoApplyKnownFixes(res.data.results)) {
+                runSigCheck(true);
+                return;
+            }
+
+            renderSigPanel(res.data.results);
+            State.sigErrors = res.data.has_errors;
+            renderStepFixesPanel();
+        })
+        .catch(e => {
+            DOM.sigPanel.innerHTML = `<div class="sig-loading" style="color:#888">
+                Sig check unavailable: ${escHtml(String(e))}</div>`;
+            State.sigErrors = false;
+            renderStepFixesPanel();
+        });
+}
+
+function autoApplyKnownFixes(results) {
+    let applied = false;
+    (results || []).forEach(r => {
+        const table = KNOWN_STEP_PARAM_FIXES[r.action];
+        if (!table) return;
+        (r.issues || []).forEach(iss => {
+            if (iss.kind !== 'unknown_param') return;
+            if (!(iss.key in table)) return;
+
+            const tag = `${r.step_index}:${iss.key}`;
+            if (State.suppressedAutoFixes.has(tag)) return;
+            const existing = State.stepParamFixes[r.step_index];
+            if (existing && iss.key in existing) return;
+
+            const newKey = table[iss.key];
+            if (!State.stepParamFixes[r.step_index]) State.stepParamFixes[r.step_index] = {};
+            State.stepParamFixes[r.step_index][iss.key] = (newKey === null) ? '' : newKey;
+            State.autoFixedParams.add(tag);
+            applied = true;
+        });
+    });
+    return applied;
+}
+
+function renderSigPanel(results) {
+    if (!results || results.length === 0) {
+        DOM.sigPanel.innerHTML = '<div class="sig-loading" style="color:#888">No steps to check.</div>';
+        return;
+    }
+    if (results.length === 1 && results[0].step_index === -1) {
+        DOM.sigPanel.innerHTML = `<div class="sig-loading" style="color:#dc3545">
+            Load error: ${escHtml(results[0].issues[0]?.detail || 'unknown')}</div>`;
+        return;
+    }
+
+    const KIND_LABEL = {
+        unknown_param:      'unknown param',
+        unknown_action:     'unknown action',
+        hardcoded_srcpath:  'hardcoded source path',
+        unresolved_token:   'unresolved token',
+        doubled_segment:    'doubled path segment',
+        bare_filename:      'bare filename (no path)',
+        load_error:         'load error',
+    };
+
+    DOM.sigPanel.innerHTML = `<div style="border:1px solid #eee; border-radius:4px; overflow:hidden;">` +
+        results.map(r => {
+            const hasIssues = r.issues && r.issues.length > 0;
+            const statusHtml = !r.found
+                ? `<span class="sh-err">✖ action not found</span>`
+                : hasIssues
+                    ? `<span class="sh-err">✖ ${r.issues.length} issue${r.issues.length !== 1 ? 's' : ''}</span>`
+                    : `<span class="sh-ok">✓ ok</span>`;
+
+            const headHtml = `<div class="sig-step-head">
+                <span class="sh-idx">${r.step_index + 1}</span>
+                <span class="sh-name">${escHtml(r.action)}</span>
+                ${statusHtml}
+            </div>`;
+
+            if (!hasIssues && r.found) return headHtml;
+
+            const issueRows = (r.issues || []).map(iss => {
+                const label = KIND_LABEL[iss.kind] || iss.kind;
+                const sugHtml = iss.suggestion ? ` → <strong>${escHtml(iss.suggestion)}</strong>` : '';
+                const isWarn = iss.kind === 'bare_filename';
+                const rowStyle = isWarn ? 'background:#fdf9ee;' : '';
+                const iconColor = isWarn ? 'color:#b8860b' : 'color:#dc3545';
+                const autoFixed = isWarn
+                    ? ' <span style="color:#28a745;font-style:italic">(auto-cleared on save)</span>' : '';
+
+                let valueHtml = '';
+                if (iss.value && iss.resolved && iss.value !== iss.resolved) {
+                    valueHtml = `<div class="sig-val-detail">
+                        <span class="svd-raw">${escHtml(iss.value)}</span>
+                        <span class="svd-arrow">→</span>
+                        <span class="svd-res">${escHtml(iss.resolved)}</span>
+                    </div>`;
+                } else if (iss.value) {
+                    valueHtml = `<div class="sig-val-detail"><span class="svd-raw">${escHtml(iss.value)}</span></div>`;
+                }
+
+                let fixHtml = '';
+                const stepIdx = r.step_index;
+                if (iss.kind === 'unknown_param') {
+                    const curFix = (State.stepParamFixes[stepIdx] || {})[iss.key];
+                    const opts = ['<option value="">— choose fix —</option>'];
+                    (r.valid_params || []).forEach(p => {
+                        const isSel = curFix !== undefined ? curFix === p : iss.suggestion === p;
+                        opts.push(`<option value="${escHtml(p)}"${isSel ? ' selected' : ''}>rename → ${escHtml(p)}</option>`);
+                    });
+                    opts.push(`<option value="__remove__"${curFix === '' ? ' selected' : ''}>✕ remove this param</option>`);
+                    fixHtml = `<div class="sig-fix-row">
+                        <span class="sf-label">Fix:</span>
+                        <select onchange="applyStepParamFix(${stepIdx}, '${escHtml(iss.key)}', this.value)">
+                            ${opts.join('')}
+                        </select>
+                    </div>`;
+                } else if (iss.kind === 'unknown_action') {
+                    const cur = State.stepActionFixes[stepIdx] !== undefined ? State.stepActionFixes[stepIdx] : (r.action || '');
+                    fixHtml = `<div class="sig-fix-row">
+                        <span class="sf-label">Action:</span>
+                        <input type="text" value="${escHtml(cur)}"
+                            onchange="applyStepActionFix(${stepIdx}, this.value)">
+                    </div>`;
+                } else if (iss.key && (iss.value || iss.resolved || iss.suggestion)) {
+                    const stored = (State.stepValueFixes[stepIdx] || {})[iss.key];
+                    const cur = stored !== undefined ? stored : (iss.suggestion || iss.resolved || iss.value);
+                    fixHtml = `<div class="sig-fix-row">
+                        <span class="sf-label">Set value:</span>
+                        <input type="text" value="${escHtml(cur)}"
+                            onchange="applyStepValueFix(${stepIdx}, '${escHtml(iss.key)}', this.value)">
+                    </div>`;
+                }
+
+                return `<div class="sig-issue-row" style="${rowStyle}">
+                    <span class="si-icon" style="${iconColor}">${isWarn ? '⚠' : '✖'}</span>
+                    <span class="si-key" style="${iconColor}">${escHtml(iss.key || '')}</span>
+                    <span class="si-msg">${escHtml(label)}${sugHtml}${autoFixed}</span>
+                    ${valueHtml}
+                    ${fixHtml}
+                </div>`;
+            }).join('');
+
+            return headHtml + issueRows;
+        }).join('') + `</div>`;
+}
+
+function applyStepParamFix(stepIndex, oldKey, newVal) {
+    if (newVal === '') {
+        if (State.stepParamFixes[stepIndex]) {
+            delete State.stepParamFixes[stepIndex][oldKey];
+            if (Object.keys(State.stepParamFixes[stepIndex]).length === 0) delete State.stepParamFixes[stepIndex];
+        }
+    } else {
+        if (!State.stepParamFixes[stepIndex]) State.stepParamFixes[stepIndex] = {};
+        State.stepParamFixes[stepIndex][oldKey] = (newVal === '__remove__') ? '' : newVal;
+    }
+    runSigCheck();
+}
+
+function applyStepValueFix(stepIndex, key, newVal) {
+    if (!State.stepValueFixes[stepIndex]) State.stepValueFixes[stepIndex] = {};
+    State.stepValueFixes[stepIndex][key] = newVal;
+    runSigCheck();
+}
+
+function applyStepActionFix(stepIndex, newVal) {
+    newVal = (newVal || '').trim();
+    if (newVal) State.stepActionFixes[stepIndex] = newVal;
+    else delete State.stepActionFixes[stepIndex];
+    runSigCheck();
+}
+
+function undoParamFix(stepIndex, oldKey) {
+    const tag = `${stepIndex}:${oldKey}`;
+    if (State.autoFixedParams.has(tag)) {
+        State.autoFixedParams.delete(tag);
+        State.suppressedAutoFixes.add(tag);
+    }
+    if (State.stepParamFixes[stepIndex]) {
+        delete State.stepParamFixes[stepIndex][oldKey];
+        if (Object.keys(State.stepParamFixes[stepIndex]).length === 0) delete State.stepParamFixes[stepIndex];
+    }
+    runSigCheck();
+}
+
+function undoValueFix(stepIndex, key) {
+    if (State.stepValueFixes[stepIndex]) {
+        delete State.stepValueFixes[stepIndex][key];
+        if (Object.keys(State.stepValueFixes[stepIndex]).length === 0) delete State.stepValueFixes[stepIndex];
+    }
+    runSigCheck();
+}
+
+function undoActionFix(stepIndex) {
+    delete State.stepActionFixes[stepIndex];
+    runSigCheck();
+}
+
+// Returns State.steps with all pending fixes applied (deep-cloned) —
+// this is what actually gets committed back into State.steps once the
+// user is happy (see commitStepFixes), and what gets sent for live
+// re-validation while fixes are still pending.
+function getFixedSteps() {
+    if (!State.steps) return State.steps;
+    const steps = JSON.parse(JSON.stringify(State.steps));
+
+    Object.entries(State.stepParamFixes).forEach(([idxStr, fixes]) => {
+        const step = steps[Number(idxStr)];
+        if (!step) return;
+        const param = step.param || (step.param = {});
+        Object.entries(fixes).forEach(([oldKey, newKey]) => {
+            if (!(oldKey in param)) return;
+            const val = param[oldKey];
+            delete param[oldKey];
+            if (newKey) param[newKey] = val;
+        });
+    });
+
+    Object.entries(State.stepValueFixes).forEach(([idxStr, fixes]) => {
+        const step = steps[Number(idxStr)];
+        if (!step) return;
+        const param = step.param || (step.param = {});
+        Object.entries(fixes).forEach(([key, val]) => { param[key] = val; });
+    });
+
+    Object.entries(State.stepActionFixes).forEach(([idxStr, newAction]) => {
+        const step = steps[Number(idxStr)];
+        if (step) step.action = newAction;
+    });
+
+    return steps;
+}
+
+// Folds all pending fixes into State.steps itself (so they persist
+// through render()/sendSteps() without needing a separate payload),
+// then clears the pending-fix state since it's now baked in.
+function commitStepFixes() {
+    State.steps = getFixedSteps();
+    State.stepParamFixes  = {};
+    State.stepValueFixes  = {};
+    State.stepActionFixes = {};
+    State.autoFixedParams = new Set();
+    // Keep suppressedAutoFixes — those are explicit user decisions for
+    // this test that should still hold after a commit.
+    if (State.selectedIndex !== null) {
+        const s = State.steps[State.selectedIndex];
+        if (s) renderParamTable(State.schema[s.action] || {}, s.param);
+    }
+    render();
+}
+
+function renderStepFixesPanel() {
+    const wrap = DOM.stepFixes;
+    const rows = [];
+
+    Object.entries(State.stepParamFixes).forEach(([idx, fixes]) => {
+        Object.entries(fixes).forEach(([oldKey, newKey]) => {
+            const desc = newKey
+                ? `rename <strong>${escHtml(oldKey)}</strong> → <strong>${escHtml(newKey)}</strong>`
+                : `remove <strong>${escHtml(oldKey)}</strong>`;
+            const autoBadge = State.autoFixedParams.has(`${idx}:${oldKey}`)
+                ? ' <span class="sf-auto">auto</span>' : '';
+            rows.push(`<div class="step-fix-row">
+                <span class="sf-step">Step ${Number(idx) + 1}</span>
+                <span>${desc}${autoBadge}</span>
+                <span class="sf-undo" onclick="undoParamFix(${idx}, '${escHtml(oldKey)}')">✕ undo</span>
+            </div>`);
+        });
+    });
+
+    Object.entries(State.stepValueFixes).forEach(([idx, fixes]) => {
+        Object.entries(fixes).forEach(([key, val]) => {
+            rows.push(`<div class="step-fix-row">
+                <span class="sf-step">Step ${Number(idx) + 1}</span>
+                <span>set <strong>${escHtml(key)}</strong> = <strong>${escHtml(val)}</strong></span>
+                <span class="sf-undo" onclick="undoValueFix(${idx}, '${escHtml(key)}')">✕ undo</span>
+            </div>`);
+        });
+    });
+
+    Object.entries(State.stepActionFixes).forEach(([idx, val]) => {
+        rows.push(`<div class="step-fix-row">
+            <span class="sf-step">Step ${Number(idx) + 1}</span>
+            <span>action → <strong>${escHtml(val)}</strong></span>
+            <span class="sf-undo" onclick="undoActionFix(${idx})">✕ undo</span>
+        </div>`);
+    });
+
+    if (rows.length === 0) {
+        wrap.style.display = 'none';
+        wrap.innerHTML = '';
+        return;
+    }
+    wrap.style.display = 'block';
+    wrap.innerHTML = `<div class="step-fixes-panel">
+        <div class="step-fixes-title">✓ Step param fixes — pending<button onclick="commitStepFixes()" style="margin-left:10px;font-size:0.85em;background:#28a745;color:#fff;border:none;border-radius:3px;padding:2px 8px;cursor:pointer;">Apply to steps</button></div>
+        ${rows.join('')}
+    </div>`;
+}
+
+function escHtml(s) {
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+window.applyStepParamFix  = applyStepParamFix;
+window.applyStepValueFix  = applyStepValueFix;
+window.applyStepActionFix = applyStepActionFix;
+window.undoParamFix  = undoParamFix;
+window.undoValueFix  = undoValueFix;
+window.undoActionFix = undoActionFix;
+window.commitStepFixes = commitStepFixes;
+
+
+
+function getParams() {
+    const vals = {};
+    DOM.paramTableBody.querySelectorAll("input").forEach(i => {
+        // Checkbox params round-trip as real booleans, so the .py file gets
+        // True/False rather than the string "on".
+        if (i.dataset.paramBool) { vals[i.dataset.paramKey] = i.checked; return; }
+
+        // renderParamTable builds one row per schema key, not per key already
+        // on the step -- so every step edited here has a row for every param
+        // the action takes, most left blank. Writing those out as literal ""
+        // clobbers the function's real default (often None) with a string,
+        // which crashes any function that special-cases None but not ""
+        // (e.g. test_sendcommand's key_delay: int(key_delay) blew up on a
+        // untouched, saved-as-"" field). Skip blank fields entirely so the
+        // step only carries params the user actually set.
+        if (i.value !== "") vals[i.dataset.paramKey] = i.value;
+    });
+    return vals;
+}
+
+async function verifyDisk() {
+    try {
+        const r = await fetch(`/api/v1/tests/${DOM.testListSel.value}/dirlist`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(State.currentConfig)
+        });
+        const data = (await r.json()).data;
+        if (!data.exists) {
+            DOM.statusDiv.innerHTML = `<span style="color:red">Folder not found at: ${data.project_root}</span>`;
+            return;
+        }
+
+        let html = `<div><b>Root:</b> <code>${data.project_root}</code></div><ul class="file-list">`;
+        data.files_on_disk.forEach(file => {
+            const isTarget = Object.values(data.resolved_config).some(v => typeof v === 'string' && v.endsWith(file));
+            html += `<li class="file-item ${isTarget ? 'match' : 'no-match'}">${isTarget ? '✓' : '·'} ${file}</li>`;
+        });
+        DOM.statusDiv.innerHTML = html + `</ul>`;
+    } catch (e) { console.error("Verify Error", e); }
+}
+
+
+function injectMissingParamKeys() {
+    if (!State.steps.length) return;
+
+    let changed = false;
+    State.steps.forEach(step => {
+        const allParamKeys = new Set([
+            ...Object.keys(step.param || {}),
+            ...Object.keys(State.schema[step.action] || {})
+        ]);
+
+        allParamKeys.forEach(key => {
+            if (!(key in State.currentConfig)) {
+                const namespacedKey = `${step.action}.${key}`;
+                // avoid duplicate if already injected from another step with same action
+                if (!(namespacedKey in State.currentConfig)) {
+                    State.currentConfig[namespacedKey] = "";
+                    State.injectedKeys.add(namespacedKey);
+                    changed = true;
+                }
+            }
+        });
+    });
+
+    if (changed) renderConfigEditor(State.currentConfig);
+}
+
+function render() {
+    DOM.stepsContainer.innerHTML = "";
+    DOM.moveTarget.innerHTML = "";
+
+    State.steps.forEach((s, i) => {
         const d = document.createElement("div");
-        d.className = "step" + (i === selectedIndex ? " selected" : "");
-        const dot = document.createElement("div");
-        dot.className = "dot";
-        d.appendChild(dot);
-        const text = document.createElement("span");
-        text.textContent = `Step ${i + 1}: ${s.action}`;
-        d.appendChild(text);
-        const delBtn = document.createElement("button");
-        delBtn.textContent = "✖";
-        delBtn.style.cssText = "margin-left: 10px; color: white; background: red; border: none; border-radius: 3px; width: 20px; height: 20px; font-size: 12px; cursor: pointer;";
-        delBtn.onclick = (e) => {
+        d.className = `step ${i === State.selectedIndex ? 'selected' : ''}`;
+        const noteMark = s.description
+            ? `<span title="${escHtml(s.description)}" style="color:#007bff; cursor:help;"> 📝</span>` : '';
+        d.innerHTML = `<div class="dot"></div><span>Step ${i + 1}: ${s.action}</span>${noteMark}`;
+
+        const pauseBox = document.createElement("input");
+        pauseBox.type = "checkbox";
+        pauseBox.title = "Pause here and wait for you to close the emulator";
+        pauseBox.checked = !!s.pause_on;
+        pauseBox.style.marginRight = "6px";
+        pauseBox.onclick = (e) => {
             e.stopPropagation();
-            if (confirm("Delete this step?")) {
-                steps.splice(i, 1);
-                if (selectedIndex === i) selectedIndex = null;
+            s.pause_on = pauseBox.checked;
+        };
+        d.insertBefore(pauseBox, d.firstChild);
+
+        const del = document.createElement("button");
+        del.textContent = "✖";
+        del.className = "btn-delete"; // Assuming CSS exists or add style here
+        del.onclick = (e) => {
+            e.stopPropagation();
+            if (confirm("Delete?")) {
+                State.steps.splice(i, 1);
+                if (State.selectedIndex === i) {
+                    State.selectedIndex = null;
+                    renderStepDescription('');
+                }
                 render();
             }
         };
-        d.appendChild(delBtn);
+        d.appendChild(del);
         d.onclick = () => selectStep(i);
-        stepsDiv.appendChild(d);
+        DOM.stepsContainer.appendChild(d);
+        
+        DOM.moveTarget.add(new Option(`${i + 1}. Position ${i + 1}`, i));
     });
+    
+    DOM.moveTarget.add(new Option(`${State.steps.length + 1}. The end`, State.steps.length));
+    DOM.moveTarget.disabled = State.selectedIndex === null;
+    DOM.insertLabel.textContent = State.selectedIndex === null 
+        ? `Insert at end (${State.steps.length} total)` 
+        : `Editing Step ${State.selectedIndex + 1}`;
 
-    for (let i = 0; i <= steps.length; i++) {
-        const opt = document.createElement("option");
-        opt.value = i;
-        if (i === 0) opt.textContent = "1. The very start";
-        else if (i === steps.length) opt.textContent = (i + 1) + ". The very end";
-        else opt.textContent = (i + 1) + ". Between Step " + i + " and " + (i + 1);
-        moveTarget.appendChild(opt);
-    }
+    renderJSON();
+    runSigCheck();
+    filterActions();
+}
 
-    if (selectedIndex === null) {
-        insertLabel.textContent = "Insert at end (" + steps.length + " steps total)";
-        moveTarget.disabled = true;
-    } else {
-        insertLabel.textContent = "Editing Step " + (selectedIndex + 1);
-        moveTarget.disabled = false;
-        moveTarget.value = selectedIndex; 
-    }
-
-    renderHighlightedJSON();
+function renderJSON() {
+    const jsonObj = { testid: DOM.testListSel.value, steps: State.steps };
+    // Simplified highlighter placeholder or use your recursive renderValue here
+    DOM.output.textContent = JSON.stringify(jsonObj, null, 2);
 }
 
 function sendSteps() {
-    const selectedModule = testListSel.value;
-    const selectedText = testListSel.options[testListSel.selectedIndex]?.text;
-    if (!selectedModule) {
-        alert("Please select a Source Test first.");
-        return;
-    }
+    const mod = DOM.testListSel.value;
+    if (!mod) return alert("Select a source");
+
+    // Fold in any pending step param fixes before syncing, so what gets
+    // saved always matches what passed (or was explicitly left failing)
+    // the step param check.
+    const hasPending = Object.keys(State.stepParamFixes).length
+        || Object.keys(State.stepValueFixes).length
+        || Object.keys(State.stepActionFixes).length;
+    if (hasPending) commitStepFixes();
+
+    const normalizedConfig = {};
+    Object.keys(State.currentConfig || {}).forEach(key => {
+        let val = State.currentConfig[key];
+
+        // description is free prose -- never coerce it to JSON, or a note that
+        // happens to start with a brace comes back as a dict.
+        if (typeof val === "string" && key !== "description") {
+            const trimmed = val.trim();
+            if ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+                (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+                try { val = JSON.parse(trimmed); } catch (e) {}
+            }
+        }
+
+        normalizedConfig[key] = val;
+    });
+
     const payload = {
-        testid: selectedModule,
-        testname: selectedText,
+        testid: mod,
+        testname: DOM.testListSel.options[DOM.testListSel.selectedIndex].text,
         testtype: "dispatchtest",
-        steps: steps
+        steps: State.steps,
+        build_config: normalizedConfig
     };
-    fetch("/testbuilder", {
-        method: "POST",
+
+    fetch(`/api/v1/tests/${mod}/steps`, {
+        method: "PUT",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(payload)
     })
     .then(r => r.json())
-    .then(data => {
-        if (data.status === "ok") {
-            alert("Saved: " + data.message);
-        } else {
-            alert("Error: " + data.message);
+    .then(d => {
+        if (d.data && DOM.descriptionStatus) {
+            DOM.descriptionStatus.textContent = 'saved';
+            DOM.descriptionStatus.style.color = '#28a745';
         }
-    })
-    .catch(err => alert("Failed to sync: " + err));
-}
-
-function renderParamTable(templateParams, currentValues={}) {
-    const tbody = document.querySelector("#param-table tbody");
-    tbody.innerHTML = "";
-    Object.keys(templateParams).forEach(key => {
-        const tr = document.createElement("tr");
-        const tdKey = document.createElement("td");
-        const inputId = `param_input_${key}`;
-        const label = document.createElement("label");
-        label.htmlFor = inputId;
-        label.textContent = key;
-        tdKey.appendChild(label);
-        tr.appendChild(tdKey);
-        const tdVal = document.createElement("td");
-        const input = document.createElement("input");
-        input.type = "text";
-        input.id = inputId;
-        input.name = key;
-        input.value = (currentValues[key] !== undefined) ? currentValues[key] : templateParams[key];
-        input.dataset.paramKey = key;
-        tdVal.appendChild(input);
-        tr.appendChild(tdVal);
-        tbody.appendChild(tr);
+        alert(d.data ? "Saved!" : "Error: " + (d.error && d.error.message));
     });
 }
 
-function getParamValuesFromTable() {
-    const values = {};
-    document.querySelectorAll("#param-table input").forEach(inp => {
-        values[inp.dataset.paramKey] = inp.value;
-    });
-    return values;
+async function createDiskImage() {
+    const statusEl = document.getElementById("mkdisk-status");
+    const sizeMb   = parseInt(document.getElementById("mkdisk-size").value, 10);
+    if (!sizeMb || sizeMb < 1) { statusEl.textContent = "Enter a size in MB"; statusEl.style.color = "#c00"; return; }
+    const cfg       = State.currentConfig || {};
+    const imageName = document.getElementById("mkdisk-name").value.trim() || undefined;
+    const overwrite = document.getElementById("mkdisk-overwrite").checked;
+    if (!cfg.projbasedir || !cfg.projdir) {
+        statusEl.textContent = "Select a source test first (needs projbasedir/projdir)";
+        statusEl.style.color = "#c00"; return;
+    }
+    statusEl.textContent = "Creating…"; statusEl.style.color = "#555";
+    try {
+        const r = await fetch("/api/make_disk_image", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ config: cfg, size_mb: sizeMb, image_name: imageName, overwrite })
+        });
+        const d = await r.json();
+        statusEl.textContent = (d.status === "ok" ? "✓ " : "✗ ") + (d.message || "");
+        statusEl.style.color = d.status === "ok" ? "#28a745" : "#c00";
+    } catch (e) {
+        statusEl.textContent = "✗ " + e; statusEl.style.color = "#c00";
+    }
 }
 
-loadTests();
-buildActionList();
-render();
+async function loadDiskImages() {
+    const sel = document.getElementById("mkdisk-source");
+    sel.innerHTML = '<option value="">— loading… —</option>';
+    try {
+        const r = await fetch("/api/list_disk_images");
+        const d = await r.json();
+        sel.innerHTML = '<option value="">— select existing image —</option>';
+        (d.images || []).filter(i => i.exists).forEach(i => {
+            const o = document.createElement("option");
+            o.value = i.path;
+            o.textContent = `${i.filename} — ${i.size_mb}MB (${i.project})`;
+            sel.appendChild(o);
+        });
+    } catch (e) {
+        sel.innerHTML = '<option value="">— error loading —</option>';
+    }
+}
+
+async function cloneDiskImage() {
+    const statusEl = document.getElementById("mkdisk-status");
+    const src = document.getElementById("mkdisk-source").value;
+    if (!src) { statusEl.textContent = "Pick a source image to clone"; statusEl.style.color = "#c00"; return; }
+    const cfg = State.currentConfig || {};
+    if (!cfg.projbasedir || !cfg.projdir) {
+        statusEl.textContent = "Select a source test first (needs projbasedir/projdir)";
+        statusEl.style.color = "#c00"; return;
+    }
+    const sizeRaw   = document.getElementById("mkdisk-size").value.trim();
+    const size_mb   = sizeRaw ? parseInt(sizeRaw, 10) : undefined;
+    const imageName = document.getElementById("mkdisk-name").value.trim() || undefined;
+    const overwrite = document.getElementById("mkdisk-overwrite").checked;
+    statusEl.textContent = "Cloning…"; statusEl.style.color = "#555";
+    try {
+        const r = await fetch("/api/clone_disk_image", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ source_path: src, config: cfg, size_mb, image_name: imageName, overwrite })
+        });
+        const d = await r.json();
+        statusEl.textContent = (d.status === "ok" ? "✓ " : "✗ ") + (d.message || "").split("\n")[0];
+        statusEl.style.color = d.status === "ok" ? "#28a745" : "#c00";
+    } catch (e) {
+        statusEl.textContent = "✗ " + e; statusEl.style.color = "#c00";
+    }
+}
+
+function viewTestDetail() {
+    const mod = DOM.testListSel.value;
+    if (!mod) return;
+    window.location.href = `/test/${encodeURIComponent(mod)}`;
+}
+window.viewTestDetail = viewTestDetail;
+
+
+// Global scope assignments for HTML buttons
+window.addStep = addStep;
+window.updateStep = updateStep;
+window.moveStep = moveStep;
+window.sendSteps = sendSteps;
+
+document.addEventListener('DOMContentLoaded', init);
 </script>
 
 {% endblock %}

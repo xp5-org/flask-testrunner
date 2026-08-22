@@ -5,25 +5,40 @@
 
 <div id="main-content" style="padding-top: 20px;">
     <h1>Test Details: {{ testname }}</h1>
+    <p class="test-identity">
+        <strong>Test ID:</strong> {{ slug }}
+        &nbsp;|&nbsp;
+        <strong>Path:</strong> <code>{{ project_path or "?" }}</code>
+    </p>
     <p id="progress-status">Progress: Idle</p>
 
     <div class="test-grid">
         {% for test in test_info %}
             {% for type, internal in test.types.items() %}
                 {% set status = test.latest_status[type] %}
-                <div class="test-card {{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else 'gray') }}">
+                <div class="test-card"
+                     data-internal="{{ internal }}"
+                     data-type="{{ type }}">
                     <div class="card-header"><strong>{{ type }}</strong></div>
                     <div class="card-body">
-                        <div><strong>ID:</strong> {{ test.id }}</div>
+                        <div><strong>Test ID:</strong> {{ test.slug }}</div>
+                        <div><strong>Path:</strong> <code>{{ test.path or 'N/A' }}</code></div>
                         <div><strong>System:</strong> {{ test.system or 'N/A' }}</div>
                         <div><strong>Platform:</strong> {{ test.platform or 'N/A' }}</div>
-                        <div><strong>Status:</strong> {{ status or 'N/A' }}</div>
+                        <div><strong>Status:</strong> <span class="card-status">{{ status or 'N/A' }}</span></div>
                     </div>
-                    <button onclick="runTest('{{ internal }}')">Run {{ type }}</button>
+                    <button
+                        class="run-btn"
+                        data-internal="{{ internal }}"
+                        data-type="{{ type }}"
+                        onclick="runTest('{{ internal }}')">
+                        Run {{ type }}
+                    </button>
                     <button onclick="window.location.href='/testbuilder/{{ internal }}'" 
-            style="background: #6c757d; color: white; border: none; border-radius: 4px; padding: 5px; cursor: pointer;">Edit</button> 
-            <!-- edit button for test to go to testbuilder is here -->
-</div>
+                        style="background: #6c757d; color: white; border: none; border-radius: 4px; padding: 5px; cursor: pointer;">
+                        Edit
+                    </button>
+                </div>
             {% endfor %}
         {% endfor %}
     </div>
@@ -55,7 +70,8 @@
                 <th>Step Name</th>
                 <th>Duration (s)</th>
                 <th>Status</th>
-                <th></th> </tr>
+                <th></th>
+            </tr>
         </thead>
         <tbody>
         {% for step in latest_summary %}
@@ -65,7 +81,8 @@
                 <td class="{{ 'green' if step.status == 'PASS' else ('red' if step.status == 'FAIL' else 'gray') }}">
                     {{ step.status }}
                 </td>
-                <td></td> </tr>
+                <td></td>
+            </tr>
         {% endfor %}
         </tbody>
     </table>
@@ -103,14 +120,49 @@
 <script>
 let isPolling = false;
 
+// Build lookup: "internal_path|type" -> status, then color cards (not buttons)
+async function colorCards() {
+    try {
+        const res = await fetch("/api/v1/tests");
+        const testfiles = (await res.json()).data.tests;
+
+        const statusMap = {};
+        testfiles.forEach(t => {
+            Object.entries(t.types || {}).forEach(([type, internalPath]) => {
+                statusMap[`${internalPath}|${type}`] = (t.latest_status || {})[type] || "";
+            });
+        });
+
+        document.querySelectorAll(".test-card").forEach(card => {
+            const key    = `${card.dataset.internal}|${card.dataset.type}`;
+            const status = statusMap[key] || "";
+
+            card.classList.remove("green", "red", "gray");
+            if (status === "PASS")      card.classList.add("green");
+            else if (status === "FAIL") card.classList.add("red");
+            else                        card.classList.add("gray");
+
+            // Keep status text in sync too
+            const statusSpan = card.querySelector(".card-status");
+            if (statusSpan && status) statusSpan.textContent = status;
+        });
+    } catch (err) {
+        console.error("Failed to color cards:", err);
+    }
+}
+
 async function runTest(internalName) {
     const status = document.getElementById("progress-status");
     status.textContent = `Progress: Starting ${internalName}...`;
 
     try {
-        const r = await fetch(`/run/${encodeURIComponent(internalName)}`);
+        const r = await fetch(`/api/v1/runs`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ test: internalName })
+        });
         if (!r.ok) throw new Error("Failed to start test");
-        
+
         if (!isPolling) {
             isPolling = true;
             poll();
@@ -125,10 +177,14 @@ async function poll() {
     const status = document.getElementById("progress-status");
 
     try {
-        const res = await fetch("/progress");
-        const data = await res.json();
+        const res  = await fetch("/api/v1/runs/current");
+        const data = (await res.json()).data;
 
-        if (data.step === "Done") {
+        // progress_state.step goes straight from a running step token to
+        // "Idle" -- there is no "Done" state from the backend. Only reload
+        // if we were actually watching a run finish (isPolling); otherwise
+        // a page freshly loaded while already idle would reload itself.
+        if (data.step === "Idle" || data.step === "Done") {
             if (isPolling) {
                 status.textContent = "Progress: Complete - Updating...";
                 isPolling = false;
@@ -139,22 +195,19 @@ async function poll() {
             return;
         }
 
-        if (data.step !== "Idle") {
-            isPolling = true;
-            status.textContent = `Progress: ${data.step} - ${data.testid} (${data.testtype})`;
-            setTimeout(poll, 2000);
-        } else {
-            status.textContent = "Progress: Idle";
-            isPolling = false;
-        }
+        isPolling = true;
+        status.textContent = `Progress: ${data.step} - ${data.testid} (${data.testtype})`;
+        setTimeout(poll, 2000);
     } catch (e) {
         console.error("Polling error:", e);
         setTimeout(poll, 5000);
     }
 }
 
-document.addEventListener("DOMContentLoaded", poll);
+document.addEventListener("DOMContentLoaded", () => {
+    colorCards();
+    poll();
+});
 </script>
-
 
 {% endblock %}
