@@ -1,0 +1,28 @@
+# xp5-org flask test automation
+
+This is a test tool using xRDP, Docker to automate various platforms.
+its purpose is to accelerate development and debugging of obsolete software
+
+## testframework can be found here:
+- https://github.com/xp5-org/flask-testrunner
+
+## projects using this test framework:
+- https://github.com/xp5-org/CC65-vice-dev
+- https://github.com/xp5-org/flask-qemu-automation
+
+## a place to complain or ask questions
+- https://discord.gg/VFZQ233cx5
+
+
+
+## Things to know:
+- api is available at http://your-ip:port/api/v1
+- /testsrc is the root of where tests live. a test is another name for a project (we are testing something?)
+- /testsrc/your_project/__testparent__.py is what flask-testrunner checks for to init a new proj
+- /testsrc/your_project/__testlist__your_project.py this has a long json structure listing out steps.
+
+## test steps:
+- they are predefined actions in the "pyhelpers" dir, under dispatch. things like take-screenshot, send-key-input, click-mouse. repeatable actions that are universal across most platforms.
+
+## cloneproject:
+- barely functional i plan to revise it and make it less awful

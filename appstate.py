@@ -1,7 +1,9 @@
 # this is in its own file so it can be imported easily
 import os
+import re
 import threading
 import time
+from markupsafe import escape, Markup
 
 class ProgressState:
     def __init__(self):
@@ -312,11 +314,81 @@ def build_nav(app):
     for endpoint, view in app.view_functions.items():
         label = getattr(view, "nav_label", None)
         if label:
-            items.append({"name": label, "endpoint": endpoint})
+            items.append({
+                "name": label,
+                "endpoint": endpoint,
+                "align": getattr(view, "nav_align", "left"),
+            })
     return items
 
-def nav(label):
+def nav(label, align="left"):
     def decorator(f):
         f.nav_label = label
+        f.nav_align = align
         return f
     return decorator
+
+
+# tiny hand-editable text format for the info page: plain text with
+# blank-line paragraphs, "# "/"## " headers, "- " list items,
+# **bold**, *italic*, and bare URLs auto-linked. No external deps.
+_INFO_URL_RE = re.compile(r"(https?://[^\s<]+)")
+_INFO_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_INFO_ITALIC_RE = re.compile(r"\*(.+?)\*")
+
+def _render_info_line(line):
+    line = str(escape(line))
+    line = _INFO_URL_RE.sub(
+        lambda m: f'<a href="{m.group(1)}" target="_blank" rel="noopener noreferrer">{m.group(1)}</a>',
+        line,
+    )
+    line = _INFO_BOLD_RE.sub(r"<strong>\1</strong>", line)
+    line = _INFO_ITALIC_RE.sub(r"<em>\1</em>", line)
+    return line
+
+def render_info_markup(text):
+    if not text:
+        return Markup("")
+
+    html = []
+    list_open = False
+    blank_count = 0
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+
+        if not line:
+            blank_count += 1
+            continue
+
+        if blank_count > 1:
+            if list_open:
+                html.append("</ul>")
+                list_open = False
+            html.append('<div class="info-spacer"></div>' * (blank_count - 1))
+        blank_count = 0
+
+        header_match = re.match(r"^(#{1,3})\s+(.*)$", line)
+        if header_match:
+            if list_open:
+                html.append("</ul>")
+                list_open = False
+            level = len(header_match.group(1))
+            html.append(f"<h{level}>{_render_info_line(header_match.group(2))}</h{level}>")
+            continue
+
+        if line.startswith("- "):
+            if not list_open:
+                html.append("<ul>")
+                list_open = True
+            html.append(f"<li>{_render_info_line(line[2:])}</li>")
+            continue
+
+        if list_open:
+            html.append("</ul>")
+            list_open = False
+        html.append(f"<p>{_render_info_line(line)}</p>")
+
+    if list_open:
+        html.append("</ul>")
+
+    return Markup("\n".join(html))

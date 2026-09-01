@@ -13,7 +13,7 @@ import apphelpers, test_runner
 import runhelper
 import apphelpers as testid
 from dbhelper import ReportDB, db
-from appstate import build_nav, nav
+from appstate import build_nav, nav, render_info_markup
 from appstate import process_registry
 from apiv1 import api_v1
 from step_validator import validate_config_steps, format_results_text, has_blocking_issues
@@ -163,9 +163,12 @@ def get_index_summaries(db_conn):
         if _index_cache["data"] is not None and _index_cache["report_id"] == latest_report_id:
             return _index_cache["data"]
 
+    if not apphelpers.testfile_registry:
+        test_runner.reload_tests()
+
     data = (
         db_conn.get_all_reports_summary(per_parent_limit=FRONT_PAGE_REPORTS_PER_TESTLIST),
-        db_conn.get_latest_report_summary(),
+        db_conn.get_latest_report_summary(known_test_ids=apphelpers.testfile_registry.keys()),
     )
 
     with _index_cache_lock:
@@ -1228,6 +1231,19 @@ def export_media_route():
 def instances_page():
     """return every process liveview.py can see, anything started by the test framework"""
     return render_template("instances.html")
+
+
+INFO_CONTENT_PATH = os.path.join(BASE_DIR, "info_content.txt")
+
+@app.route("/info")
+@nav("Info", align="right")
+def info_page():
+    try:
+        with open(INFO_CONTENT_PATH, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        raw = ""
+    return render_template("info.html", content=render_info_markup(raw))
 
 
 

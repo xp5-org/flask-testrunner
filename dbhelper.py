@@ -89,11 +89,34 @@ class ReportDB:
         return rows
 
 
-    def get_latest_report_summary(self, target_id=None):
+    def get_latest_report_summary(self, target_id=None, known_test_ids=None):
+        """Most recent report's step summary.
+
+        report.sqlite is shared with other Flask instances running the same
+        app.py against a common mount (e.g. qemuflask) -- the newest report
+        row in the DB may belong to a test this process can't even discover
+        (not in its testfile_registry), since that instance wrote it. Pass
+        known_test_ids (e.g. apphelpers.testfile_registry.keys()) to restrict
+        "most recent" to a report this instance could plausibly have produced.
+        """
         conn = self._connect()
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("SELECT id FROM report ORDER BY id DESC LIMIT 1")
+        if known_test_ids is not None:
+            known_test_ids = list(known_test_ids)
+            if not known_test_ids:
+                conn.close()
+                return []
+            placeholders = ",".join("?" * len(known_test_ids))
+            cur.execute(
+                "SELECT r.id FROM report r "
+                "JOIN test_result tr ON tr.report_id = r.id "
+                "WHERE tr.test_id IN (%s) "
+                "ORDER BY r.id DESC LIMIT 1" % placeholders,
+                known_test_ids,
+            )
+        else:
+            cur.execute("SELECT id FROM report ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
         if not row:
             conn.close()

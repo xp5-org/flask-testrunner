@@ -122,23 +122,36 @@ def reload_tests():
         sys.path.insert(0, TESTSRC_ROOT)
 
     seen_modules = set()
-    # Every testlist lives directly inside its project directory, one level
-    # under TESTSRC_ROOT (sourcedir/<project>/__testlist__*.py), right beside
-    # the __testparent__.py stub that names its container -- never nested any
-    # deeper (verified: every __testlist__*/__testparent__*.py in this repo
-    # sits at that exact depth). So scan project dirs non-recursively instead
-    # of walking the whole tree: a full os.walk used to also descend into
-    # whatever huge, testlist-free content happened to sit inside a project
-    # dir -- vendored git checkouts, their build-output trees (a compiled
-    # llvm-project alone is thousands of files), stale __pycache__ dirs --
-    # none of which can ever contain a testlist, so there was never anything
-    # to find down there. Not walking past depth 1 makes every one of those
-    # a non-issue for free, without needing an exclude list for any of them.
+    # Every testlist lives two levels under TESTSRC_ROOT: sourcedir/<systemsrc>/
+    # <project>/__testlist__*.py, right beside the __testparent__.py stub that
+    # names its container. A full os.walk would also descend into whatever
+    # huge, testlist-free content happens to sit alongside project dirs --
+    # qemuflask's cmake build output dirs (thousands of files, arbitrarily
+    # named -- can't filter by name), vendored git checkouts, stale
+    # __pycache__ dirs -- none of which can ever contain a testlist. So we
+    # scan two levels non-recursively, and gate descent into each candidate
+    # project dir on a single os.path.isfile() stat for __testparent__.py --
+    # cheap regardless of how many files a non-project dir holds, since we
+    # never list its contents.
     try:
-        project_dirs = sorted(e.path for e in os.scandir(TESTSRC_ROOT)
-                               if e.is_dir(follow_symlinks=False))
+        systemsrc_dirs = sorted(e.path for e in os.scandir(TESTSRC_ROOT)
+                                 if e.is_dir(follow_symlinks=False))
     except OSError:
-        project_dirs = []
+        systemsrc_dirs = []
+
+    project_dirs = []
+    for systemsrc_dir in systemsrc_dirs:
+        try:
+            entries = os.scandir(systemsrc_dir)
+        except OSError:
+            continue
+        with entries:
+            for e in entries:
+                if not e.is_dir(follow_symlinks=False):
+                    continue
+                if os.path.isfile(os.path.join(e.path, apphelpers.TESTPARENT_FILE)):
+                    project_dirs.append(e.path)
+    project_dirs.sort()
 
     for project_dir in project_dirs:
         try:
