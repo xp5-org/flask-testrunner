@@ -24,6 +24,11 @@ REPORT_DIR = os.path.join(BASE_DIR, "reports")
 compile_logs_dir = os.path.join(BASE_DIR, "compile_logs")
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
 TESTSRC_ROOT = "/testsrc/sourcedir"
+# How many directory levels below TESTSRC_ROOT to look for a __testparent__.py
+# before giving up on a branch. Covers both the 1-deep (flask-qemu-automation)
+# and 2-deep (c64/cc65) source trees; scanning stops the moment a marker is
+# found, so raising this doesn't cost anything for shallower trees.
+PROJECT_SCAN_MAX_DEPTH = 3
 
 failed_loads = []
 import importlib.util
@@ -122,35 +127,34 @@ def reload_tests():
         sys.path.insert(0, TESTSRC_ROOT)
 
     seen_modules = set()
-    # Every testlist lives two levels under TESTSRC_ROOT: sourcedir/<systemsrc>/
-    # <project>/__testlist__*.py, right beside the __testparent__.py stub that
-    # names its container. A full os.walk would also descend into whatever
-    # huge, testlist-free content happens to sit alongside project dirs --
-    # qemuflask's cmake build output dirs (thousands of files, arbitrarily
-    # named -- can't filter by name), vendored git checkouts, stale
-    # __pycache__ dirs -- none of which can ever contain a testlist. So we
-    # scan two levels non-recursively, and gate descent into each candidate
-    # project dir on a single os.path.isfile() stat for __testparent__.py --
-    # cheap regardless of how many files a non-project dir holds, since we
-    # never list its contents.
-    try:
-        systemsrc_dirs = sorted(e.path for e in os.scandir(TESTSRC_ROOT)
-                                 if e.is_dir(follow_symlinks=False))
-    except OSError:
-        systemsrc_dirs = []
-
+    # A project dir is any directory under TESTSRC_ROOT that has a
+    # __testparent__.py beside its testlists. Different source trees nest
+    # these at different depths
     project_dirs = []
-    for systemsrc_dir in systemsrc_dirs:
+
+    def _scan_for_project_dirs(dirpath, depth):
+        if os.path.isfile(os.path.join(dirpath, apphelpers.TESTPARENT_FILE)):
+            project_dirs.append(dirpath)
+            return
+        if depth >= PROJECT_SCAN_MAX_DEPTH:
+            return
         try:
-            entries = os.scandir(systemsrc_dir)
+            entries = os.scandir(dirpath)
         except OSError:
-            continue
+            return
         with entries:
-            for e in entries:
-                if not e.is_dir(follow_symlinks=False):
-                    continue
-                if os.path.isfile(os.path.join(e.path, apphelpers.TESTPARENT_FILE)):
-                    project_dirs.append(e.path)
+            subdirs = [e.path for e in entries if e.is_dir(follow_symlinks=False)]
+        for subdir in subdirs:
+            _scan_for_project_dirs(subdir, depth + 1)
+
+    try:
+        top_dirs = sorted(e.path for e in os.scandir(TESTSRC_ROOT)
+                           if e.is_dir(follow_symlinks=False))
+    except OSError:
+        top_dirs = []
+
+    for top_dir in top_dirs:
+        _scan_for_project_dirs(top_dir, 1)
     project_dirs.sort()
 
     for project_dir in project_dirs:
