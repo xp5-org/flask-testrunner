@@ -4,21 +4,17 @@
 newprojecthelper.py
 -------------------
 Handles cloning an existing testlist project into a new directory.
-
-Key change from original:
-  - update_register_metadata replaced by update_config_in_file, which uses
-    the same brace-tracking line rewriter as the testbuilder (formerly
-    update_test_data_in_file in app.py).  This means it can write None values,
-    rewrite steps, and handle any CONFIG value type — not just quoted scalars.
-  - copybuildtest now accepts an optional repaired_config dict; if provided,
-    the repaired steps are written instead of the source steps.
 """
 
 import os
+import ast
 import shutil
 import re
 import json
 import importlib.util
+
+import apphelpers
+from apphelpers import TESTPARENT_FILE
 
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -55,14 +51,7 @@ def _as_bool(v):
 
 def _regenerable_disk_names(config):
     """Basenames of disk images the qemu dispatch steps unconditionally
-    rebuild every run — safe to skip at clone time: the D: srcdisk (recreated
-    from sourcecode_dir by _prepare_srcdisk), the legacy full-conversion C:
-    qcow2 (rebuilt wholesale from hdd1_img by test_convert_hddimg_to_hddqcow,
-    when there's no hdd1_template to speak of), and the C: overlay itself —
-    but ONLY when hdd1_persist isn't set. With hdd1_persist=True the overlay
-    is exactly the thing that must survive across runs (installed software,
-    prior writes), so it's real project state, not disposable — it has to be
-    deep-copied like any other file, not skipped/rebuilt pristine.
+    rebuild every run 
 
     Skipping the disposable ones (rather than deep-copying) matters because a
     raw copy would carry the SOURCE project's disk writes into the new
@@ -88,10 +77,7 @@ def _regenerable_disk_names(config):
 
 
 def _rebuild_overlays(dest_dir_abs, regenerable):
-    """Recreate fresh COW overlays in the destination now, backed by the same
-    shared template the source used, rather than leaving them missing until
-    the project's next run. No-ops silently if qemuhelpers can't be loaded —
-    test_startqemu will just build them on first run instead."""
+    """Recreate fresh COW overlays in the destination backed shared template"""
     qh = None
     for name, (kind, template) in regenerable.items():
         if kind != "overlay":
@@ -144,11 +130,16 @@ def copybuildtest(src_dir, outputname, testlist_name=None, dest_dir=None,
     target_testlist_path = os.path.join(dest_dir_abs, final_testlist_name)
 
     if src_dir_abs == dest_dir_abs:
-        # Variant clone — same folder, different testlist file.
-        # Find source testlist and copy under new name only.
+        # Variant clone — same folder, different testlist file. The container
+        # is the folder, so the new variant joins the one already declared
+        # here; pin its parent to the stub rather than trusting a caller
+        # override, which would only ever produce a load error.
         source_testlist_path = _find_testlist(src_dir_abs)
         if source_testlist_path:
             shutil.copy2(source_testlist_path, target_testlist_path)
+            existing = _read_parent(src_dir_abs)
+            if existing:
+                kwargs["parent"] = existing["name"]
             _write_config(target_testlist_path, repaired_config, **kwargs)
         return dest_dir_abs, final_testlist_name
 
@@ -168,6 +159,11 @@ def copybuildtest(src_dir, outputname, testlist_name=None, dest_dir=None,
             continue
         if entry.startswith("__testlist__") and entry.endswith(".py"):
             continue
+        # The parent stub is per-container, and a new folder is a new
+        # container — copying the source's would hand the clone the source's
+        # name. A fresh one is written below instead.
+        if entry == TESTPARENT_FILE:
+            continue
         if entry in regenerable:
             continue
         s = os.path.join(src_dir_abs, entry)
@@ -178,12 +174,30 @@ def copybuildtest(src_dir, outputname, testlist_name=None, dest_dir=None,
             shutil.copy2(s, d)
     _rebuild_overlays(dest_dir_abs, regenerable)
 
+    # Declare the new container. Arch and platform carry over from the source
+    # (a clone runs on the same machine); the name is the caller's if it asked
+    # for one, else the new project slug.
+    src_parent = _read_parent(src_dir_abs) or {}
+    requested = kwargs.get("parent") or (repaired_config or {}).get("parent")
+    # A new folder is a new container. If the caller didn't rename it, the
+    # value carried over from the source CONFIG would name two directories the
+    # same thing (a duplicate_parent collision), so fall back to the slug.
+    new_parent_name = (requested
+                       if requested and requested != src_parent.get("name")
+                       else outputname)
+    _write_parent(dest_dir_abs, {
+        "name": new_parent_name,
+        "archtype": src_parent.get("archtype", "unknown"),
+        "platform": src_parent.get("platform", ""),
+    })
+
     # Copy testlist file
     source_testlist_path = _find_testlist(src_dir_abs)
     if source_testlist_path:
         shutil.copy2(source_testlist_path, target_testlist_path)
         if "projdir" not in kwargs:
             kwargs["projdir"] = os.path.basename(dest_dir_abs.rstrip("/"))
+        kwargs["parent"] = new_parent_name
         _write_config(target_testlist_path, repaired_config, **kwargs)
 
     return dest_dir_abs, final_testlist_name
@@ -202,6 +216,31 @@ def _find_testlist(directory):
         if fname.startswith("__testlist__") and fname.endswith(".py"):
             return os.path.join(directory, fname)
     return None
+
+
+def _read_parent(directory):
+    """This directory's PARENT dict, or None if it has no stub."""
+    try:
+        return apphelpers.load_parent(directory)
+    except Exception:
+        return None
+
+
+def _write_parent(directory, parent):
+    """Write a directory's __testparent__.py."""
+    with open(os.path.join(directory, TESTPARENT_FILE), "w", encoding="utf-8") as fh:
+        fh.write(
+            '"""Parent container for this directory.\n\n'
+            'The __testlist__*.py files here declare themselves children of it\n'
+            'by name, and each contributes one button. Name/archtype/platform\n'
+            'live here so every child agrees on them by construction.\n'
+            '"""\n\n'
+            "PARENT = {\n"
+            f'    "name": {json.dumps(parent["name"])},\n'
+            f'    "archtype": {json.dumps(parent["archtype"])},\n'
+            f'    "platform": {json.dumps(parent["platform"])},\n'
+            "}\n"
+        )
 
 
 def _write_config(pyfile_path, repaired_config=None, **kwargs):
@@ -230,93 +269,80 @@ def _write_config(pyfile_path, repaired_config=None, **kwargs):
         _update_scalars_only(pyfile_path, kwargs)
 
 
+def _find_config_dict(tree):
+    """The ast.Dict node assigned to CONFIG at module level, or None."""
+    for node in tree.body:
+        if (isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "CONFIG" for t in node.targets)
+                and isinstance(node.value, ast.Dict)):
+            return node.value
+    return None
+
+
 def update_config_in_file(file_path, updates):
     """
     Rewrite CONFIG keys in a testlist .py file.
 
-    Uses brace-tracking to handle multi-line values (lists, dicts) correctly.
-    Converts Python None/True/False properly.  Can write any JSON-serialisable
-    value including steps lists and None.
+    Uses the AST to find top-level key's value
+    spans, so multi-line values (lists, dicts) are replaced correctly no
+    matter what characters their strings contain. Converts Python
+    None/True/False properly. Can write any JSON-serialisable value
+    including steps lists and None.
     """
     with open(file_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+        src = f.read()
+    lines = src.splitlines(keepends=True)
+
+    tree = ast.parse(src, filename=file_path)
+    config = _find_config_dict(tree)
+    if config is None:
+        raise ValueError(f"No top-level CONFIG = {{...}} dict found in {file_path}")
+
+    entries = []  # (key, value_node) in source order, constant keys only
+    for k, v in zip(config.keys, config.values):
+        if isinstance(k, ast.Constant) and isinstance(k.value, str):
+            entries.append((k.value, v))
+
+    written_keys = set()
+    skip_until = {}
+    replace_at = {}  # 1-indexed start line -> matched update key
+
+    for key, value in entries:
+        if key in updates:
+            replace_at[value.lineno] = key
+            for ln in range(value.lineno, value.end_lineno + 1):
+                skip_until[ln] = True
 
     new_lines = []
-    written_keys = set()
-    i = 0
-    in_config   = False
-    brace_depth = 0
-
-    while i < len(lines):
-        line = lines[i]
-
-        if not in_config and re.search(r"^\s*CONFIG\s*=\s*\{", line):
-            in_config   = True
-            brace_depth = 0
-
-        if in_config:
-            # Check if line starts a key we want to replace
-            matched_key = None
-            match_obj   = None
-            for key in updates:
-                m = re.match(rf"^(\s*[\"']{re.escape(key)}[\"']\s*:\s*)", line)
-                if m:
-                    matched_key = key
-                    match_obj   = m
-                    break
-
-            if matched_key is not None:
-                prefix      = match_obj.group(1)
-                base_indent = re.match(r"^\s*", line).group(0)
-                val_data    = updates[matched_key]
-                val_str     = _py_repr(val_data, base_indent)
-
-                if not val_str.rstrip().endswith(","):
-                    val_str = val_str.rstrip() + ","
-
-                new_lines.append(f"{prefix}{val_str}\n")
-                written_keys.add(matched_key)
-
-                # Skip the old multi-line value
-                balance = line.count("{") + line.count("[") - line.count("}") - line.count("]")
-                if balance > 0:
-                    i += 1
-                    while i < len(lines):
-                        l = lines[i]
-                        balance += l.count("{") + l.count("[") - l.count("}") - l.count("]")
-                        if balance <= 0:
-                            break
-                        i += 1
-                i += 1
-                continue
-
-            brace_depth += line.count("{") - line.count("}")
-            if brace_depth <= 0:
-                # Closing brace of CONFIG. Any update key never matched above
-                # is new (e.g. "description" on a test written before that key
-                # existed) -- append it here rather than dropping it silently,
-                # which is what this rewriter used to do.
-                missing = [k for k in updates if k not in written_keys]
-                if missing:
-                    indent = _config_key_indent(lines)
-                    # Keep the previous last entry comma-terminated.
-                    for j in range(len(new_lines) - 1, -1, -1):
-                        stripped = new_lines[j].rstrip()
-                        if not stripped or stripped.lstrip().startswith("#"):
-                            continue
-                        if not stripped.endswith(","):
-                            new_lines[j] = stripped + ",\n"
-                        break
-                    for key in missing:
-                        val_str = _py_repr(updates[key], indent)
-                        new_lines.append(f'{indent}"{key}": {val_str},\n')
-                in_config = False
-            new_lines.append(line)
-            i += 1
+    for lineno, line in enumerate(lines, start=1):
+        if lineno in replace_at:
+            key = replace_at[lineno]
+            m = re.match(rf"^(\s*[\"']{re.escape(key)}[\"']\s*:\s*)", line)
+            prefix = m.group(1) if m else f'{re.match(r"^\s*", line).group(0)}"{key}": '
+            base_indent = re.match(r"^\s*", line).group(0)
+            val_str = _py_repr(updates[key], base_indent)
+            if not val_str.rstrip().endswith(","):
+                val_str = val_str.rstrip() + ","
+            new_lines.append(f"{prefix}{val_str}\n")
+            written_keys.add(key)
             continue
-
+        if lineno in skip_until:
+            continue
+        if lineno == config.end_lineno:
+            missing = [k for k in updates if k not in written_keys]
+            if missing:
+                indent = _config_key_indent(lines)
+                for j in range(len(new_lines) - 1, -1, -1):
+                    stripped = new_lines[j].rstrip()
+                    if not stripped or stripped.lstrip().startswith("#"):
+                        continue
+                    if not stripped.endswith(","):
+                        new_lines[j] = stripped + ",\n"
+                    break
+                for key in missing:
+                    val_str = _py_repr(updates[key], indent)
+                    new_lines.append(f'{indent}"{key}": {val_str},\n')
         new_lines.append(line)
-        i += 1
 
     with open(file_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
@@ -339,10 +365,7 @@ def _config_key_indent(lines, default="    "):
 def _py_repr(val, base_indent="    "):
     """Serialise a value to Python source syntax.
 
-    Done structurally rather than by post-processing json.dumps output: the
-    old version string-replaced null/true/false across the whole rendered
-    blob, which rewrote those words inside string values too (a description
-    reading "returns null on error" came back as "returns None on error").
+    Done structurally rather than by post-processing json.dumps output
     """
     def render(v, indent):
         pad = indent + "    "

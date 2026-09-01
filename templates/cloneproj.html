@@ -546,8 +546,10 @@ hr.div { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
         <!-- New-folder only -->
         <div id="s3-new" class="hidden">
             <div class="field">
-                <label>Suite Name <span class="badge b-key">testname</span></label>
+                <label>Container Name <span class="badge b-key">__testparent__.py</span></label>
                 <input type="text" id="f-testname" oninput="s3Changed()" placeholder="Human label shown in the runner">
+                <div class="hint">Names the new folder's container — the row in the
+                runner. Every testlist in the folder is a child of it.</div>
             </div>
             <div class="field">
                 <label>Suite Folder <span class="badge b-warn">projdir</span></label>
@@ -565,7 +567,7 @@ hr.div { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
         <div id="s3-variant" class="hidden">
             <div class="field-row">
                 <div class="field">
-                    <label>Suite Name</label>
+                    <label>Container Name</label>
                     <input type="text" id="f-testname-v" readonly>
                 </div>
                 <div class="field">
@@ -579,9 +581,10 @@ hr.div { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
         </div>
 
         <div class="field">
-            <label>Test Role <span class="badge b-warn">testtype</span></label>
+            <label>Test Role <span class="badge b-warn">function</span></label>
             <input type="text" id="f-testtype" oninput="s3Changed()" placeholder="e.g. build, run, atest, btest">
-            <div class="hint">Each role gets its own Run button in the test runner.</div>
+            <div class="hint">This testlist's button under its container. Must be
+            unique among that container's children.</div>
         </div>
 
         <hr class="div">
@@ -712,31 +715,18 @@ let _stepValueFixes  = {};  // { [stepIndex]: { [key]: newValue } }
 let _stepActionFixes = {};  // { [stepIndex]: newActionName }
 
 // Tracks which (stepIndex,oldKey) entries in _stepParamFixes were applied
-// automatically via KNOWN_STEP_PARAM_FIXES, vs picked manually — purely
-// for the "(auto)" badge in the pending-fixes panel.
+// automatically via KNOWN_STEP_PARAM_FIXES
 let _autoFixedParams    = new Set();  // "stepIndex:oldKey"
-// Entries the user explicitly undid from an auto-fix — suppresses
-// re-applying that auto-fix on the next check.
 let _suppressedAutoFixes = new Set(); // "stepIndex:oldKey"
 
-const SKIP_KEYS  = new Set(['testname','projdir','testtype','projbasedir','structure','steps']);
+const SKIP_KEYS  = new Set(['parent','projdir','function','projbasedir','structure','steps']);
 const TOKEN_RE   = /\{[^}]+\}/;
 const ABS_RE     = /^\/[a-zA-Z]/;
 
-// ─── Known legacy → current dispatch-arg renames ──────────────────
-// When the dispatch signature check flags an `unknown_param` and the
-// step's action + old param name match an entry here, the rename (or
-// removal, for `null`) is applied automatically — no manual fix needed
-// in Step 4. This is how old testlists carrying outdated arg names
-// (from before a dispatch function's signature changed) get repaired
-// on every future clone, instead of needing per-file manual edits.
-//
-// Add new entries here as more "the function's args got renamed but old
-// testlists/clones still use the old names" cases turn up.
 const KNOWN_STEP_PARAM_FIXES = {
     test_compiletheprogram: {
-        d64_drive8_file: 'd64_path',  // old: explicit drive8 image path -> current: d64_path
-        d64_file:        null,        // old: unused/duplicate disk-image arg -> drop
+        d64_drive8_file: 'd64_path',
+        d64_file:        null,
     },
 };
 
@@ -827,7 +817,6 @@ function onSrcSelected() {
 }
 
 function showS1Issues() {
-    // Surface issues IN THE SOURCE that will need fixing
     const issues = [];
     const cfg = rawConfig;
     const pd  = cfg.projdir || '';
@@ -881,11 +870,11 @@ function prepStep3() {
 
     if (isVariant) {
         desc.textContent = 'Folder and suite name stay the same. Choose a new test role and output filename.';
-        setv('f-testname-v', rawConfig.testname || '');
+        setv('f-testname-v', rawConfig.parent || '');
         setv('f-projdir-v',  rawConfig.projdir  || '');
     } else {
         desc.textContent = 'Enter a new folder slug. All derived paths (src, out_dir, prg_filepath…) update live from it.';
-        setv('f-testname',    rawConfig.testname    || '');
+        setv('f-testname',    '');
         setv('f-projdir',     '');          // must be typed — prevents reuse of old name
         setv('f-projbasedir', rawConfig.projbasedir || '');
     }
@@ -906,7 +895,7 @@ function updatePreview() {
     const testtype = getv('f-testtype').trim();
     const newSug   = [projdir, testtype].filter(Boolean).join('_');
 
-    // Auto-fill suffix only if user hasn't manually changed it from our last suggestion
+    // Auto-fill suffix only if user hasn't manually changed it
     const curSuffix = getv('f-suffix');
     if (curSuffix === _autoSuffix || curSuffix === '') {
         setv('f-suffix', newSug);
@@ -920,7 +909,10 @@ function updatePreview() {
 function s3Validate() {
     const projdir  = (cloneMode === 'variant' ? rawConfig.projdir : getv('f-projdir')).trim();
     const testtype = getv('f-testtype').trim();
-    document.getElementById('btn3-next').disabled = !(projdir && testtype);
+    // A new folder must name its container; a variant inherits the one the
+    // folder already declares.
+    const parent   = cloneMode === 'variant' ? true : getv('f-testname').trim();
+    document.getElementById('btn3-next').disabled = !(projdir && testtype && parent);
 }
 
 // ─── Step 4: validate ─────────────────────────────────────────────
@@ -955,7 +947,6 @@ function prepStep4() {
         mirrorFields.innerHTML = '';
     }
 
-    // ── Hardcoded absolute paths (not already in mirror) ──
     const hardKeys = Object.entries(rawConfig)
         .filter(([k, v]) =>
             !SKIP_KEYS.has(k) && typeof v === 'string' &&
@@ -999,7 +990,7 @@ function s4Refresh() {
             const resolved = resolveStr(tmpl, vars);
             const bad = TOKEN_RE.test(resolved);
             if (bad) hasErr = true;
-            // Also flag doubled path segments
+            // flag doubled path segments
             const doubled = !bad && /([/][^/]+)\1/.test(resolved);
             if (doubled) hasErr = true;
             const level = bad ? 'err' : doubled ? 'warn' : 'ok';
@@ -1136,29 +1127,29 @@ function doClone() {
         });
 }
 
-// ─── Var builders ────────────────────────────────────────────────
+
 function getBaseVars() {
     // Identity fields only — no mirror/hard edits yet
     const v = { ...rawConfig };
     if (cloneMode === 'new') {
-        v.testname    = getv('f-testname').trim();
+        // New folder = new container, so it declares its own parent name. A
+        // variant joins the container already declared in that folder
+        v.parent      = getv('f-testname').trim();
         v.projdir     = getv('f-projdir').trim();
         v.projbasedir = getv('f-projbasedir').trim();
     }
-    v.testtype = getv('f-testtype').trim();
+    v.function = getv('f-testtype').trim();
     return v;
 }
 
 function getFullVars() {
     const v = getBaseVars();
-    // Mirror edits (step 4 fields)
     document.querySelectorAll('.mx-inp').forEach(el => { v[el.dataset.key] = el.value; });
-    // Hardcoded path edits
     document.querySelectorAll('.hx-inp').forEach(el => { v[el.dataset.key] = el.value; });
     return v;
 }
 
-// ─── Template resolution ─────────────────────────────────────────
+
 function resolveStr(tmpl, vars, passes = 6) {
     let s = String(tmpl ?? '');
     for (let i = 0; i < passes; i++) {
@@ -1170,7 +1161,6 @@ function resolveStr(tmpl, vars, passes = 6) {
     return s;
 }
 
-// ─── Signature check ─────────────────────────────────────────────
 
 function s1SigCheck() {
     // Non-blocking preview on step 1 — shows issues in source but doesn't gate anything
@@ -1210,8 +1200,6 @@ function s4RunSigCheck(skipAutoFix = false) {
     panel.innerHTML = '<div class="sig-loading">Checking step params against dispatch signatures…</div>';
     _sigErrors = false;
 
-    // Build the resolved var map as the clone will see it — mirrors getFullVars()
-    // but we also resolve template keys so value-checks see final paths
     const vars = getFullVars();
     // Resolve all template values into vars so the backend can use them
     Object.keys(rawConfig).forEach(k => {
@@ -1241,9 +1229,6 @@ function s4RunSigCheck(skipAutoFix = false) {
                 return;
             }
 
-            // If any remaining unknown_param issues match a known legacy
-            // rename, apply it silently and re-check once so the panel
-            // renders the already-fixed state.
             if (!skipAutoFix && autoApplyKnownFixes(res.data.results)) {
                 s4RunSigCheck(true);
                 return;
@@ -1339,7 +1324,6 @@ function renderSigPanel(panel, results, editable = false) {
                 </div>`;
             }
 
-            // Inline fix controls — step 4 only
             let fixHtml = '';
             if (editable) {
                 const stepIdx = r.step_index;
@@ -1396,11 +1380,6 @@ function renderSigPanel(panel, results, editable = false) {
     }).join('');
 }
 
-// ─── Step param fixes ─────────────────────────────────────────────
-// These let Step 4 remap/remove/edit step params that the dispatch
-// signature check flagged as invalid, then feed the corrected steps
-// back into validation and into the clone payload.
-
 function applyStepParamFix(stepIndex, oldKey, newVal) {
     if (newVal === '') {
         if (_stepParamFixes[stepIndex]) {
@@ -1431,7 +1410,6 @@ function applyStepActionFix(stepIndex, newVal) {
 // Scans validate_steps results for unknown_param issues that match an
 // entry in KNOWN_STEP_PARAM_FIXES (for that step's action) and silently
 // applies the rename/removal. Returns true if anything was applied
-// (caller should re-run the check to get a clean result).
 function autoApplyKnownFixes(results) {
     let applied = false;
     (results || []).forEach(r => {
@@ -1525,10 +1503,7 @@ function getFixedSteps() {
     return steps;
 }
 
-// Recursively finds the object that directly owns `key`, searching
-// through nested objects/arrays — schema-agnostic so this works
-// whether step params live at the top level of a step or nested
-// under e.g. "args"/"params"/"kwargs".
+// Recursively finds the object that directly owns `key`
 function findKeyContainer(obj, key) {
     if (obj === null || typeof obj !== 'object') return null;
     if (Array.isArray(obj)) {
@@ -1546,8 +1521,7 @@ function findKeyContainer(obj, key) {
     return null;
 }
 
-// Recursively finds the {container, key} pair whose value equals
-// `actionName` — used to rename a step's dispatch action.
+// Recursively finds the {container, key} pair whose value equals `actionName`
 function findActionKeyContainer(obj, actionName) {
     if (obj === null || typeof obj !== 'object') return null;
     if (Array.isArray(obj)) {
@@ -1567,7 +1541,7 @@ function findActionKeyContainer(obj, actionName) {
     return null;
 }
 
-// Best-effort lookup of the field holding a step's dispatch action name.
+// lookup of the field holding a step's dispatch action name.
 function findActionValue(step) {
     for (const k of ['action', 'call', 'fn', 'function', 'dispatch', 'name']) {
         if (typeof step[k] === 'string') return step[k];
@@ -1575,9 +1549,7 @@ function findActionValue(step) {
     return null;
 }
 
-// Flat list of {step_index, type, ...} fixes — sent alongside the
-// clone request so the backend can apply the same edits when it
-// writes the cloned testlist's steps.
+// Flat list of {step_index, type, ...}
 function collectStepFixes() {
     const fixes = [];
     Object.entries(_stepParamFixes).forEach(([idx, m]) => {
@@ -1597,8 +1569,6 @@ function collectStepFixes() {
     return fixes;
 }
 
-// Renders the "pending step param fixes" summary above the sig panel,
-// with per-fix undo links.
 function renderStepFixesPanel() {
     const wrap = document.getElementById('s4-step-fixes');
     const rows = [];

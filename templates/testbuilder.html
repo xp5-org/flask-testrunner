@@ -220,12 +220,17 @@
         <!-- Timeline sidebar -->
         <div id="timeline" style="width:350px; border-right:1px solid #ccc; position:relative; padding:20px 10px 20px 60px; overflow-y:auto; background:#f4f4f4;">
             <div id="line" style="position:absolute; left:30px; top:0; bottom:0; width:2px; background:#bbb;"></div>
+            <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                <button onclick="saveAndSync()" data-testid="save-sync-btn" style="background:#28a745;color:white;border:none;border-radius:4px;padding:6px 10px;">Save &amp; Sync</button>
+                <button id="view-detail-btn" onclick="viewTestDetail()" disabled
+                        style="background:#6c757d;color:white;border:none;border-radius:4px;padding:6px 10px;">View Test Details</button>
+            </div>
             <div style="font-size:0.7em; color:#888; margin-bottom:4px;">Pause on</div>
             <div id="steps"></div>
         </div>
 
         <!-- Builder main area -->
-        <div id="builder" style="flex:1; display:flex; flex-direction:column; background:white; overflow:hidden;">
+        <div id="builder" style="flex:1; display:flex; flex-direction:column; background:white; overflow-y:auto; overflow-x:hidden;">
 
             <!-- Controls at top of builder -->
 <div id="controls" style="flex-shrink:0; padding:20px; border-bottom:1px solid #eee; display:flex; flex-direction:column; gap:10px;">
@@ -264,7 +269,7 @@
 
 
             <!-- Parameter and JSON output area -->
-            <div id="param-container" style="display:flex; flex-direction:column; padding:20px; overflow:hidden;">
+            <div id="param-container" style="display:flex; flex-direction:column; padding:20px;">
                 
                 <!-- Action + Parameters split -->
                 <div id="param-split" style="display:flex; flex:0 0 auto; gap:20px; margin-bottom:10px;">
@@ -292,7 +297,7 @@
     <button class="primary-btn" onclick="addStep()" data-testid="add-step-btn">Add Step</button>
 </div>
 
-                    <div id="param-right" style="display:flex; flex-direction:column; overflow:hidden;">
+                    <div id="param-right" style="display:flex; flex-direction:column;">
 
                         <label><strong>Parameters:</strong></label>
                         <div id="driver-hint" style="display:none; margin-bottom:8px; border:1px solid #c3e6cb; border-radius:4px; background:#f0faf4; font-family:monospace; font-size:0.8em; overflow:hidden;">
@@ -301,36 +306,36 @@
                             </div>
                             <div id="driver-hint-body" style="padding:8px 10px;"></div>
                         </div>
-                        <div id="param-table-wrapper" style="height:280px; overflow-y:auto; border:1px solid #eee; flex-shrink:0;">
+                        <div id="param-table-wrapper" style="border:1px solid #eee;">
                             <table id="param-table">
                                 <tbody></tbody>
                             </table>
                         </div>
 
-                        <label for="step-description" style="margin-top:10px;">
+                        <label for="step-description" style="margin-top:6px;">
                             <strong>Step notes:</strong>
                         </label>
                         <textarea id="step-description" data-testid="step-description"
-                            style="width:100%; box-sizing:border-box; min-height:50px; resize:vertical;
-                                   padding:6px; font-family:inherit; font-size:0.9em; border:1px solid #ccc;
+                            style="width:100%; box-sizing:border-box; min-height:32px; resize:vertical;
+                                   padding:4px 6px; font-family:inherit; font-size:0.9em; border:1px solid #ccc;
                                    border-radius:4px;"></textarea>
 
-                        <label for="test-description" style="margin-top:10px;">
+                        <label for="test-description" style="margin-top:6px;">
                             <strong>Description / goal:</strong>
                         </label>
                         <textarea id="test-description" data-testid="test-description"
                             oninput="onDescriptionInput()"
-                            style="width:100%; box-sizing:border-box; min-height:70px; resize:vertical;
-                                   padding:6px; font-family:inherit; font-size:0.9em; border:1px solid #ccc;
+                            style="width:100%; box-sizing:border-box; min-height:40px; resize:vertical;
+                                   padding:4px 6px; font-family:inherit; font-size:0.9em; border:1px solid #ccc;
                                    border-radius:4px;"></textarea>
                         <div id="description-status" style="font-size:0.8em; color:#888; min-height:1em;"></div>
 
-                        <label for="test-tags" style="margin-top:10px;">
+                        <label for="test-tags" style="margin-top:6px;">
                             <strong>Tags:</strong>
                         </label>
                         <input type="text" id="test-tags" data-testid="test-tags"
                             oninput="onTagsInput()"
-                            style="width:100%; box-sizing:border-box; padding:6px; font-family:inherit;
+                            style="width:100%; box-sizing:border-box; padding:4px 6px; font-family:inherit;
                                    font-size:0.9em; border:1px solid #ccc; border-radius:4px;">
                         <div id="tags-status" style="font-size:0.8em; color:#888; min-height:1em;"></div>
                     </div>
@@ -342,9 +347,6 @@
         <div class="sig-loading">Select a source test to check step params…</div>
     </div>
 </div>
-<button id="view-detail-btn" onclick="viewTestDetail()" disabled
-        style="background:#6c757d;color:white;border:none;border-radius:4px;margin-left:8px;">View Test Details</button>
-                        <button onclick="saveAndSync()" data-testid="save-sync-btn" style="background:#28a745;color:white;border:none;border-radius:4px;margin-left:20px;">Save &amp; Sync</button>
                 <fieldset style="margin-top:12px; border:1px solid #ccc; border-radius:4px; padding:8px 12px;">
                     <legend style="font-size:0.9em;">Disk image tools (target: {projbasedir}{projdir}/&lt;image&gt;)</legend>
                     <div>
@@ -364,8 +366,8 @@
                         Clone with no size = exact copy. Clone with a bigger size grows it: a <b>bootable DOS disk is rebuilt bootable</b> at the new size (system files + all data carried over); a plain data disk keeps its files (not bootable). "Create blank FAT" makes an empty data disk with a src/ dir.
                     </div>
                 </fieldset>
-                <label style="margin-top:10px;"><strong>JSON Output:</strong></label>
-                <pre id="output" style="flex:1; background:#222; color:#adff2f; padding:15px; border-radius:4px; overflow:auto; font-family:monospace; margin:0;">{}</pre>
+                <!-- <label style="margin-top:10px;"><strong>JSON Output:</strong></label>
+                <pre id="output" style="flex:1; background:#222; color:#adff2f; padding:15px; border-radius:4px; overflow:auto; font-family:monospace; margin:0;">{}</pre> -->
 
 
 
@@ -476,7 +478,7 @@ const DOM = {
     configContainer: document.getElementById('dynamic-config-container'),
     structureDisplay: document.getElementById('structure-display'),
     systemFilter: document.getElementById('system-filter'),
-    output: document.getElementById("output"),
+//    output: document.getElementById("output"),
     stepsContainer: document.getElementById("steps"),
     statusDiv: document.getElementById('file-check-status'),
     sigPanel: document.getElementById('sig-panel'),
@@ -648,7 +650,7 @@ async function loadTests() {
         // overwriting it with the display name made every deep link miss.
         const data = (await r.json()).data.tests.map(t => ({
             id: t.display_name, display_name: t.display_name, module: t.module,
-            slug: t.id,
+            slug: t.id, container_id: t.container_id,
             types: t.types, system: t.system, platform: t.platform,
             description: t.description || '', tags: t.tags || [],
             latest_status: t.latest_status
@@ -1858,15 +1860,8 @@ function render() {
         ? `Insert at end (${State.steps.length} total)` 
         : `Editing Step ${State.selectedIndex + 1}`;
 
-    renderJSON();
     runSigCheck();
     filterActions();
-}
-
-function renderJSON() {
-    const jsonObj = { testid: DOM.testListSel.value, steps: State.steps };
-    // Simplified highlighter placeholder or use your recursive renderValue here
-    DOM.output.textContent = JSON.stringify(jsonObj, null, 2);
 }
 
 function sendSteps() {
@@ -1996,7 +1991,9 @@ async function cloneDiskImage() {
 function viewTestDetail() {
     const mod = DOM.testListSel.value;
     if (!mod) return;
-    window.location.href = `/test/${encodeURIComponent(mod)}`;
+    const test = State.allTestData.find(t => t.module === mod);
+    if (!test) return;
+    window.location.href = `/test/${encodeURIComponent(test.container_id)}`;
 }
 window.viewTestDetail = viewTestDetail;
 

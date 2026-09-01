@@ -36,7 +36,7 @@ def _load_template() -> str:
 
 def _build_summary_rows(results: list) -> str:
     rows = []
-    for name, status, color, _, _, duration in results:
+    for name, status, color, _, _, duration, _ in results:
         rows.append(
             f'<tr><td>{name}</td><td>{duration:.2f}</td>'
             f'<td class="{color}">{status}</td></tr>'
@@ -134,7 +134,7 @@ def _build_artifacts_table(results: list, subdir_path: str) -> str:
     tree (e.g. a generated launch script) is small and still copied locally.
     """
     all_paths = []
-    for (_name, _status, _color, output, _stdout, _duration) in results:
+    for (_name, _status, _color, output, _stdout, _duration, _info) in results:
         all_paths.extend(_extract_artifacts(output))
 
     entries = []          # linked-in-place project files, in first-seen order
@@ -180,8 +180,13 @@ def _build_artifacts_table(results: list, subdir_path: str) -> str:
 
 
 def _build_detail_sections(results: list, screenshot_map: defaultdict, subdir_path: str) -> str:
+    # Each step's name is already just "{i}_{func_name}" plus, when the
+    # testlist gave the step a short "title", ": {title}" -- the header
+    # stays short by construction. The step's full "description" (if any)
+    # travels separately as `info` and is rendered as its own paragraph
+    # instead of bloating the header.
     sections = []
-    for idx, (name, status, color, output, stdout, duration) in enumerate(results, start=1):
+    for idx, (header, status, color, output, stdout, duration, info) in enumerate(results, start=1):
         matching_images = screenshot_map.get(idx, [])
         if matching_images:
             img_tags = "\n".join(
@@ -198,11 +203,13 @@ def _build_detail_sections(results: list, screenshot_map: defaultdict, subdir_pa
             line for line in (output or "").splitlines() if not line.strip().startswith("ARTIFACT:")
         )
 
+        info_para = f"<p>INFO: {info}</p>\n    " if info else ""
         sections.append(f"""<hr>
 <div class="flex-container">
   <div class="output-column">
-    <h3>{name}</h3>
-    <p><strong>Duration:</strong> {duration:.2f} seconds</p>
+    <h3>{header}</h3>
+    {info_para}<p><strong>RESULTS:</strong></p>
+    <p>Duration: {duration:.2f} seconds</p>
     <pre>OUTPUT:
     {display_output}
 
@@ -241,7 +248,7 @@ def generate_report(
     Render and write an HTML test report.
 
     Args:
-        results:          List of (name, status, color, output, stdout, duration) tuples.
+        results:          List of (name, status, color, output, stdout, duration, info) tuples.
         report_path:      Full path where the .html file will be written.
         report_dir:       Base report directory (used to locate loose screenshots).
         compile_logs_dir: Directory holding compile logs to include in the report.

@@ -56,7 +56,13 @@ td:last-child {
 
 </style>
 
-<p id="progress-status">Progress: Idle</p>
+<p id="progress-status" style="display:flex; align-items:center; gap:10px;">
+    <span id="progress-text">Progress: Idle</span>
+    <button id="stop-btn" onclick="stopCurrentRun()"
+            style="display:none; background:#dc3545; color:#fff; border:none; border-radius:4px; padding:3px 12px; cursor:pointer;">
+        Stop
+    </button>
+</p>
 
 <h3>Filter by System</h3>
 <select id="system-filter">
@@ -127,7 +133,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 <h2>Summaries</h2>
 <table id="summaries-table">
     <tr><th>Report</th><th>Duration</th><th>Timestamp</th><th>Status</th></tr>
-    {% for report, duration, status, timestamp in summaries %}
+    {% for report, duration, status, timestamp, test_id in summaries %}
     <tr>
         <td><a href="{{ url_for('view_report', filepath=report) }}">{{ report }}</a></td>
         <td>{{ duration }}</td>
@@ -146,7 +152,7 @@ const bgcolor2 = "#e0e0e0";
 let isPolling = false;
 document.addEventListener("DOMContentLoaded", async () => {
     window.startTest = async (file, displayName, type) => {
-        const statusEl = document.getElementById("progress-status");
+        const statusEl = document.getElementById("progress-text");
         statusEl.textContent = `Progress: Starting ${displayName}...`;
         
         try {
@@ -171,11 +177,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     };
 
     async function pollProgress() {
-        const statusEl = document.getElementById("progress-status");
-        
+        const statusEl = document.getElementById("progress-text");
+        const stopBtn  = document.getElementById("stop-btn");
+
         try {
             const res = await fetch("/api/v1/runs/current");
             const data = (await res.json()).data;
+            const batch = data.batch;
+            const batchRunning = !!(batch && batch.status === "running");
+            const busy = batchRunning || (data.step !== "Idle" && data.step !== "Done");
+
+            if (stopBtn) {
+                stopBtn.style.display = busy ? "inline-block" : "none";
+                if (busy) { stopBtn.disabled = false; stopBtn.textContent = "Stop"; }
+            }
 
             if (data.step === "Done") {
                 if (isPolling) {
@@ -190,23 +205,36 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             if (data.step !== "Idle") {
                 isPolling = true;
-                statusEl.textContent = `Progress: ${data.step} - ${data.testid} 
-                    - ${data.step_name} 
-                    - (${data.testtype}) 
+                statusEl.textContent = `Progress: ${data.step} - ${data.testid}
+                    - ${data.step_name}
+                    - (${data.testtype})
                     - ${data.testname}`;
-                
+
                 setTimeout(pollProgress, 2000);
             } else {
                 statusEl.textContent = "Progress: Idle";
-                isPolling = false; 
+                isPolling = false;
             }
         } catch (e) {
             console.error("Polling error:", e);
-            setTimeout(pollProgress, 5000); 
+            setTimeout(pollProgress, 5000);
         }
     }
 
-    pollProgress(); 
+    window.stopCurrentRun = async () => {
+        const stopBtn = document.getElementById("stop-btn");
+        if (stopBtn) {
+            stopBtn.disabled = true;
+            stopBtn.textContent = "Stopping...";
+        }
+        try {
+            await fetch("/api/v1/runs/current/stop", { method: "POST" });
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    pollProgress();
 });
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -233,14 +261,14 @@ document.addEventListener("DOMContentLoaded", async () => {
                         <table class="test-table">
                             <tr><th>Name</th><th>Test ID</th><th>System</th><th>Run</th></tr>`;
 
-        // group_key is computed by the API (testname + system, slugified).
-        // Don't rebuild that rule here -- it used to live only in this file,
-        // which made it invisible why two testlists did or didn't share a row.
+        // container_id is computed by the API from the container each testlist
+        // declares in its directory's __testparent__.py. Don't rebuild that
+        // rule here -- it used to live only in this file, which made it
+        // invisible why two testlists did or didn't share a row.
         const grouped = {};
         tests.forEach(test => {
-            const key = test.group_key || `${test.display_name}|${test.system}`;
-            if (!grouped[key]) grouped[key] = [];
-            grouped[key].push(test);
+            if (!grouped[test.container_id]) grouped[test.container_id] = [];
+            grouped[test.container_id].push(test);
         });
 
 Object.values(grouped).forEach(group => {
@@ -259,9 +287,12 @@ Object.values(grouped).forEach(group => {
     }).join("")
 ).join("");
 
+// The row IS the container, so both its label and its link are the
+// container's id. A child testlist is a button, never a page.
+const testHref = `/test/${encodeURIComponent(test.container_id)}`;
 html += `<tr>
-    <td><span class="test-link" data-testid="${test.id}">${test.group_label || test.display_name}</span></td>
-    <td><span class="test-link" data-testid="${test.id}">${test.id}</span></td>
+    <td><a class="test-link" href="${testHref}">${test.group_label || test.display_name}</a></td>
+    <td><a class="test-link" href="${testHref}">${test.container_id}</a></td>
     <td class="buttons-col">${test.system}</td>
     <td class="buttons-cell">${buttons}</td>
 </tr>`;
@@ -300,13 +331,6 @@ const updateStriping = (rows) => {
     document.querySelectorAll("#most-recent-table, #summaries-table").forEach(tbl => {
         const rows = Array.from(tbl.querySelectorAll("tr")).slice(1);
         updateStriping(rows);
-    });
-
-    document.querySelectorAll(".test-link").forEach(el => {
-        el.addEventListener("click", () => {
-            const id = el.dataset.testid;
-            window.location.href = `/test/${encodeURIComponent(id)}`;
-        });
     });
 
     systemFilter.addEventListener("change", () => {

@@ -1,9 +1,9 @@
 import sys, os
+import re
 import importlib.util
 import os
 import inspect
-import difflib
-import itertools
+from markupsafe import escape, Markup
 _step_counter = 0
 
 testfile_registry = {}
@@ -13,16 +13,114 @@ registry_map = {}
 helperdir = "/testsrc/pyhelpers"
 TESTSRC_BASE = "/testsrc"
 
+TESTPARENT_FILE = "__testparent__.py"
+REQUIRED_PARENT_KEYS = ("name", "archtype", "platform")
+
+_parent_cache = {}
+
+
+class ParentError(Exception):
+    """A testlist's parent declaration is missing, malformed, or mismatched."""
+
+
+def load_parent(dirpath):
+    """Read a directory's __testparent__.py and return its PARENT dict.
+
+    Returns None when the directory has no stub at all 
+    """
+    path = os.path.join(dirpath, TESTPARENT_FILE)
+    if path in _parent_cache:
+        return _parent_cache[path]
+
+    parent = None
+    if os.path.exists(path):
+        modname = "_testparent_%s" % abs(hash(path))
+        try:
+            spec = importlib.util.spec_from_file_location(modname, path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            parent = getattr(mod, "PARENT", None)
+        except Exception as e:
+            raise ParentError(f"{path} failed to load: {e}")
+        finally:
+            sys.modules.pop(modname, None)
+
+        if not isinstance(parent, dict):
+            raise ParentError(f"{path} defines no PARENT dict")
+        missing = [k for k in REQUIRED_PARENT_KEYS if not parent.get(k)]
+        if missing:
+            raise ParentError(f"{path} PARENT is missing {', '.join(missing)}")
+
+    _parent_cache[path] = parent
+    return parent
+
+
+def resolve_parent(config, module_file):
+    """Bind a testlist to the container declared in its own directory.
+
+    The child names its parent and the directory's stub names itself; they
+    must agree exactly. 
+    """
+    dirpath = os.path.dirname(os.path.abspath(module_file))
+    parent = load_parent(dirpath)
+    if parent is None:
+        raise ParentError(
+            f"{dirpath} has no {TESTPARENT_FILE}. Every testlist belongs to a "
+            f"container; create the stub declaring this directory's name, "
+            f"archtype and platform.")
+
+    declared = config.get("parent")
+    if not declared:
+        raise ParentError(
+            f"CONFIG has no 'parent'. Declare it as the container this test "
+            f"belongs to: \"parent\": \"{parent['name']}\".")
+    if declared != parent["name"]:
+        raise ParentError(
+            f"CONFIG parent {declared!r} does not match {dirpath}/"
+            f"{TESTPARENT_FILE}, which declares {parent['name']!r}.")
+
+    if not config.get("function"):
+        raise ParentError(
+            "CONFIG has no 'function'. It is this test's button label under "
+            "its parent (e.g. build, run, dosbox, 86box).")
+    return parent
+
+
+_URL_RE = re.compile(r'(https?://[^\s<>"]+)')
+_URL_TRAILING_PUNCT = '.,;:!?)]}\'"'
+
+
+def linkify(text):
+    """Escape text and turn any http(s) URL in it into a clickable link.
+
+    Used for container descriptions in __testparent__.py
+    """
+    if not text:
+        return Markup("")
+    parts = _URL_RE.split(str(text))
+    html_parts = []
+    for part in parts:
+        if not _URL_RE.match(part):
+            html_parts.append(str(escape(part)))
+            continue
+        url = part.rstrip(_URL_TRAILING_PUNCT)
+        trailing = part[len(url):]
+        html_parts.append(
+            f'<a href="{escape(url)}" target="_blank" rel="noopener noreferrer">{escape(url)}</a>'
+            f'{escape(trailing)}'
+        )
+    return Markup("".join(html_parts))
+
 
 def project_relpath(meta):
     """Directory a registered testlist lives in, relative to /testsrc.
 
     e.g. {"__full_path__": "/testsrc/sourcedir/OWC_CLONETEST2/__testlist__..."}
-    -> "sourcedir/OWC_CLONETEST2". This is the path a human actually edits --
-    unlike the URL slug (lowercased/hyphenated, lossy) or testname (free text,
-    not required to match the directory), it's derived straight from
-    test_runner.reload_tests()'s filesystem walk, so it's exact by
-    construction. Returns None if the testlist hasn't been discovered on disk
+    -> "sourcedir/OWC_CLONETEST2". 
+     
+    obtained from test_runner.reload_tests()'s filesystem walk
+     
+    Returns None if the testlist hasn't been discovered on disk
     (registry entry has no __full_path__, e.g. a stale/removed module).
     """
     full_path = (meta or {}).get("__full_path__")
@@ -35,6 +133,9 @@ def clear_registries():
     for r in list(registry_map.values()):
         r[:] = []
     testfile_registry.clear()
+    # Stubs are re-read on the next reload, so edits to a __testparent__.py
+    # take effect without restarting the app.
+    _parent_cache.clear()
 
 
 def _add_to_registry(registry, description, func):
@@ -62,84 +163,39 @@ def register_testfile(id, types, description=None, tags=None, system=None, platf
 
 
 def registry_warnings():
-    """Detect likely testlist authoring mistakes across the registry.
+    """Detect provable identity collisions across the registry.
 
-    Two classes of bug this catches, both seen in practice from a copy-pasted
-    __testlist__*.py that wasn't fully edited:
+    Both kinds here are decidable from the data:
 
-    - testname_mismatch: a file's testname doesn't match the testname the
-      rest of its directory's siblings use, so it silently renders as its
-      own duplicate top-level row instead of joining that group (rows are
-      grouped by testname+system -- see testid.group_key).
+    - duplicate_parent: two directories declare the same container name+arch
+      in their __testparent__.py, so two separate containers render as one row.
     - duplicate_testtype: two files share the same testname+system+testtype,
       so their run buttons carry the same label and their status history
-      (keyed by testname+testtype in the report DB) collides.
+      (keyed by testname+testtype in the report DB) collides. That is a
+      demonstrable clash -- two testlists cannot both own one key.
     """
     warnings = []
 
-    by_dir = {}
+    # Two directories claiming one container name+arch merge into a single row
+    # even though they are separate containers -- provable from the stubs, no
+    # inference: each directory states its own name, and two states either
+    # match or they don't.
+    by_container = {}
     for modname, info in testfile_registry.items():
-        by_dir.setdefault(project_relpath(info), []).append((modname, info))
-
-    # Below what similarity ratio two testnames sharing a directory are
-    # treated as "different tests" rather than "one test, mis-copied name".
-    # 0.65 clears "OpenWatcom CubeRotate" / "...CubeRotate ModeVal" (0.84) and
-    # "m68k retro68 build+run" / "m68k retro68 on basilisk" (0.70), and stays
-    # below every unrelated pair in mac_m68k's 5-test directory (max 0.58) --
-    # that dir genuinely hosts 5 different tests sharing one source folder,
-    # not a copy-paste mistake, so it must not get flagged wholesale.
-    SIMILARITY_THRESHOLD = 0.65
-
-    for path, entries in by_dir.items():
-        if not path or len(entries) < 2:
+        path = project_relpath(info)
+        if not path:
             continue
-        counts = {}
-        for _, info in entries:
-            counts[info["id"]] = counts.get(info["id"], 0) + 1
-        if len(counts) < 2:
-            continue  # every sibling already agrees -- nothing to flag
-        majority_name, majority_count = max(counts.items(), key=lambda kv: kv[1])
-
-        if majority_count > 1:
-            # Clear majority (e.g. 3 siblings agree, 1 doesn't) -- flag only
-            # the outlier(s) relative to it.
-            for modname, info in entries:
-                if info["id"] != majority_name:
-                    warnings.append({
-                        "kind": "testname_mismatch",
-                        "module": modname,
-                        "path": path,
-                        "testname": info["id"],
-                        "expected_testname": majority_name,
-                        "message": f"{modname} ({path})",
-                    })
-        else:
-            # A tie -- every testname in this dir appears exactly once (the
-            # common case: two sibling files, two different names). No
-            # majority to measure outliers against, and a directory can
-            # legitimately host several unrelated tests (mac_m68k has 5), so
-            # flag a pair only when the names themselves look like variants
-            # of one another, not merely "different".
-            flagged = set()
-            for (mod_a, info_a), (mod_b, info_b) in itertools.combinations(entries, 2):
-                name_a, name_b = info_a["id"], info_b["id"]
-                if name_a == name_b:
-                    continue
-                ratio = difflib.SequenceMatcher(None, name_a.lower(), name_b.lower()).ratio()
-                if ratio < SIMILARITY_THRESHOLD:
-                    continue
-                for modname, info in ((mod_a, info_a), (mod_b, info_b)):
-                    if modname in flagged:
-                        continue
-                    flagged.add(modname)
-                    warnings.append({
-                        "kind": "testname_mismatch",
-                        "module": modname,
-                        "path": path,
-                        "testname": info["id"],
-                        "expected_testname": None,
-                        "message": f"{modname} ({path})",
-                    })
+        by_container.setdefault((info["id"], info.get("system")), set()).add(path)
+    for (name, system), paths in sorted(by_container.items(), key=lambda kv: str(kv[0])):
+        if len(paths) > 1:
+            warnings.append({
+                "kind": "duplicate_parent",
+                "testname": name,
+                "system": system,
+                "paths": sorted(paths),
+                "message": f"{name} declared by {len(paths)} directories: "
+                           f"{', '.join(sorted(paths))}",
+            })
 
     seen_variant = {}
     for modname, info in testfile_registry.items():
@@ -212,19 +268,21 @@ def init_test_env(config, module_name):
     from apphelpers import register_testfile
 
     paths = build_paths(config["structure"], config["projbasedir"], config)
+    module = sys.modules[module_name]
+    parent = resolve_parent(config, module.__file__)
 
     register_testfile(
-        id=config.get("testname"),
-        types=[config["testtype"]],
+        id=parent["name"],
+        types=[config["function"]],
         # Optional free-prose "what is this test for" from CONFIG. Absent on
         # every testlist written before the key existed, hence the default.
         description=config.get("description"),
         # Searchable labels ("floppy", "sound", "boot") -- absent on every
         # testlist written before the key existed, same as description.
         tags=config.get("tags"),
-        system=config["archtype"].upper(),
-        platform=config["platform"],
-    )(sys.modules[module_name])
+        system=parent["archtype"].upper(),
+        platform=parent["platform"],
+    )(module)
     reset_step_counter()
     return paths
 
@@ -282,3 +340,83 @@ def process_config(config_dict):
         "actual_files": actual_files,
         "project_root": proj_path
     }
+
+
+TESTLIST_MARKER = "__testlist__"
+SEPARATOR = "."
+
+
+def _kebab(text):
+    text = (text or "").strip().lower()
+    text = re.sub(r"[\s_./]+", "-", text)
+    text = re.sub(r"[^a-z0-9\-]", "", text)
+    text = re.sub(r"-{2,}", "-", text)
+    return text.strip("-")
+
+
+def _split(modname):
+    parts = modname.split(".")
+    proj = parts[0] if len(parts) > 1 else ""
+    leaf = parts[-1]
+    if leaf.startswith(TESTLIST_MARKER):
+        leaf = leaf[len(TESTLIST_MARKER):]
+    return proj, leaf
+
+
+def _candidates(modname):
+    proj, leaf = _split(modname)
+    if not proj:
+        return [_kebab(leaf)]
+
+    short = leaf
+    prefix = proj.lower() + "_"
+    if leaf.lower().startswith(prefix) and len(leaf) > len(prefix):
+        short = leaf[len(prefix):]
+
+    full = f"{_kebab(proj)}{SEPARATOR}{_kebab(leaf)}"
+    if short == leaf:
+        return [full]
+    return [f"{_kebab(proj)}{SEPARATOR}{_kebab(short)}", full]
+
+
+def build_index(modnames):
+    modnames = sorted(modnames)
+    wanted = {m: _candidates(m) for m in modnames}
+
+    counts = {}
+    for m in modnames:
+        counts[wanted[m][0]] = counts.get(wanted[m][0], 0) + 1
+
+    slug_to_mod, mod_to_slug = {}, {}
+    for m in modnames:
+        options = wanted[m]
+        chosen = options[0] if counts[options[0]] == 1 else options[-1]
+        base, n = chosen, 2
+        while chosen in slug_to_mod:
+            chosen = f"{base}-{n}"
+            n += 1
+        slug_to_mod[chosen] = m
+        mod_to_slug[m] = chosen
+    return slug_to_mod, mod_to_slug
+
+
+def slug_for(modname, modnames):
+    _, mod_to_slug = build_index(modnames)
+    return mod_to_slug.get(modname, modname)
+
+
+def resolve(test_id, modnames):
+    modnames = list(modnames)
+    if test_id in modnames:
+        return test_id
+    slug_to_mod, _ = build_index(modnames)
+    return slug_to_mod.get(test_id)
+
+
+def container_id(name, system):
+    return f"{_kebab(name)}--{_kebab(system)}"
+
+
+def resolve_container(cid, registry):
+    return sorted(m for m, info in registry.items()
+                  if container_id(info.get("id"), info.get("system")) == cid)

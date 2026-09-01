@@ -218,7 +218,7 @@ class ReportDB:
 
         if per_parent_limit is not None:
             query = """
-                SELECT path, total_duration, overall_status, report_start
+                SELECT path, total_duration, overall_status, report_start, test_id
                 FROM (
                     -- test_id  the parent name is a display
                     -- label that gets renamed ("openwatcom1" -> "OpenWatcom
@@ -234,7 +234,7 @@ class ReportDB:
             params.append(per_parent_limit)
         else:
             query = """
-                SELECT path, total_duration, overall_status, report_start
+                SELECT path, total_duration, overall_status, report_start, test_id
                 FROM (%s)
             """ % query
 
@@ -246,8 +246,8 @@ class ReportDB:
         cur.execute(query, params)
         rows = cur.fetchall()
         conn.close()
-        
-        return [(r[0], f"{r[1]:.2f}" if r[1] is not None else "0.00", r[2].upper() if r[2] else "", r[3]) for r in rows]
+
+        return [(r[0], f"{r[1]:.2f}" if r[1] is not None else "0.00", r[2].upper() if r[2] else "", r[3], r[4]) for r in rows]
 
 
     def init_report_db(self):

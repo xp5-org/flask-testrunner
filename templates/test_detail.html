@@ -4,13 +4,41 @@
 <!-- {% include "navbar.html" %} -->
 
 <div id="main-content" style="padding-top: 20px;">
-    <h1>Test Details: {{ testname }}</h1>
+    <h1>Container: {{ testname }}</h1>
     <p class="test-identity">
-        <strong>Test ID:</strong> {{ slug }}
+        <strong>Container ID:</strong> {{ slug }}
         &nbsp;|&nbsp;
         <strong>Path:</strong> <code>{{ project_path or "?" }}</code>
     </p>
-    <p id="progress-status">Progress: Idle</p>
+    {% if container_description %}
+        <p class="container-description">{{ container_description|linkify }}</p>
+    {% endif %}
+
+    {% if container_batch_all or container_batch_failed %}
+    <div id="batch-controls" style="margin:10px 0; display:flex; gap:10px; align-items:center;">
+        {% if container_batch_all %}
+        <button id="batch-run-all-btn" onclick="runBatch('all')"
+                style="background:#007bff;color:#fff;border:none;border-radius:4px;padding:6px 14px;cursor:pointer;">
+            Run All
+        </button>
+        {% endif %}
+        {% if container_batch_failed %}
+        <button id="batch-run-failed-btn" onclick="runBatch('failed')"
+                style="background:#dc3545;color:#fff;border:none;border-radius:4px;padding:6px 14px;cursor:pointer;">
+            Run Failed
+        </button>
+        {% endif %}
+        <span id="batch-status" style="font-size:0.85em; color:#666;"></span>
+    </div>
+    {% endif %}
+
+    <p id="progress-status" style="display:flex; align-items:center; gap:10px;">
+        <span id="progress-text">Progress: Idle</span>
+        <button id="stop-btn" onclick="stopCurrentRun()"
+                style="display:none; background:#dc3545; color:#fff; border:none; border-radius:4px; padding:3px 12px; cursor:pointer;">
+            Stop
+        </button>
+    </p>
 
     <div class="test-grid">
         {% for test in test_info %}
@@ -21,12 +49,15 @@
                      data-type="{{ type }}">
                     <div class="card-header"><strong>{{ type }}</strong></div>
                     <div class="card-body">
-                        <div><strong>Test ID:</strong> {{ test.slug }}</div>
+                        <div><strong>Testlist ID:</strong> {{ test.slug }}</div>
                         <div><strong>Path:</strong> <code>{{ test.path or 'N/A' }}</code></div>
                         <div><strong>System:</strong> {{ test.system or 'N/A' }}</div>
                         <div><strong>Platform:</strong> {{ test.platform or 'N/A' }}</div>
                         <div><strong>Status:</strong> <span class="card-status">{{ status or 'N/A' }}</span></div>
                     </div>
+                    {% if test.pause_label %}
+                        <div class="pause-label" style="font-size: 0.85rem; color: #c77700;">{{ test.pause_label }}</div>
+                    {% endif %}
                     <button
                         class="run-btn"
                         data-internal="{{ internal }}"
@@ -34,7 +65,7 @@
                         onclick="runTest('{{ internal }}')">
                         Run {{ type }}
                     </button>
-                    <button onclick="window.location.href='/testbuilder/{{ internal }}'" 
+                    <button onclick="window.location.href='/testbuilder/{{ internal }}'"
                         style="background: #6c757d; color: white; border: none; border-radius: 4px; padding: 5px; cursor: pointer;">
                         Edit
                     </button>
@@ -89,32 +120,37 @@
     {% endif %}
 
     <h2>Reports History</h2>
-    {% if reports %}
-    <table>
-        <thead>
-            <tr>
-                <th>Report File</th>
-                <th>Duration</th>
-                <th>Timestamp</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for report in reports %}
-            <tr>
-                <td><a href="/reports/{{ report.filepath }}" target="_blank">{{ report.filename }}</a></td>
-                <td>{{ report.duration }}</td>
-                <td>{{ report.timestamp }}</td>
-                <td class="{{ 'green' if report.status == 'PASS' else ('red' if report.status == 'FAIL' else 'gray') }}">
-                    {{ report.status }}
-                </td>
-            </tr>
+    {% for test in test_info %}
+        {% for type, internal in test.types.items() %}
+            <h3>{{ type }}</h3>
+            {% if test.reports %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Report File</th>
+                        <th>Duration</th>
+                        <th>Timestamp</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for report in test.reports %}
+                    <tr>
+                        <td><a href="/reports/{{ report.filepath }}" target="_blank">{{ report.filename }}</a></td>
+                        <td>{{ report.duration }}</td>
+                        <td>{{ report.timestamp }}</td>
+                        <td class="{{ 'green' if report.status == 'PASS' else ('red' if report.status == 'FAIL' else 'gray') }}">
+                            {{ report.status }}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p>No reports found for this variant.</p>
+            {% endif %}
         {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p>No reports found for this test.</p>
-    {% endif %}
+    {% endfor %}
 </div>
 
 <script>
@@ -152,8 +188,8 @@ async function colorCards() {
 }
 
 async function runTest(internalName) {
-    const status = document.getElementById("progress-status");
-    status.textContent = `Progress: Starting ${internalName}...`;
+    const text = document.getElementById("progress-text");
+    text.textContent = `Progress: Starting ${internalName}...`;
 
     try {
         const r = await fetch(`/api/v1/runs`, {
@@ -169,34 +205,106 @@ async function runTest(internalName) {
         }
     } catch (err) {
         console.error(err);
-        status.textContent = "Error: Could not start test.";
+        text.textContent = "Error: Could not start test.";
+    }
+}
+
+async function runBatch(mode) {
+    const btnAll    = document.getElementById("batch-run-all-btn");
+    const btnFailed = document.getElementById("batch-run-failed-btn");
+    const statusEl  = document.getElementById("batch-status");
+    if (btnAll)    btnAll.disabled = true;
+    if (btnFailed) btnFailed.disabled = true;
+    if (statusEl)  statusEl.textContent = "Starting batch...";
+
+    try {
+        const r = await fetch(`/api/v1/containers/${encodeURIComponent("{{ slug }}")}/batch-runs`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode })
+        });
+        const body = await r.json();
+        if (!r.ok) {
+            if (statusEl) statusEl.textContent = `Error: ${body.error ? body.error.message : "could not start batch"}`;
+            if (btnAll)    btnAll.disabled = false;
+            if (btnFailed) btnFailed.disabled = false;
+            return;
+        }
+        if (!isPolling) {
+            isPolling = true;
+            poll();
+        }
+    } catch (err) {
+        console.error(err);
+        if (statusEl) statusEl.textContent = "Error: could not start batch.";
+        if (btnAll)    btnAll.disabled = false;
+        if (btnFailed) btnFailed.disabled = false;
+    }
+}
+
+async function stopCurrentRun() {
+    const stopBtn = document.getElementById("stop-btn");
+    if (stopBtn) {
+        stopBtn.disabled = true;
+        stopBtn.textContent = "Stopping...";
+    }
+    try {
+        await fetch("/api/v1/runs/current/stop", { method: "POST" });
+    } catch (err) {
+        console.error(err);
     }
 }
 
 async function poll() {
-    const status = document.getElementById("progress-status");
+    const text      = document.getElementById("progress-text");
+    const stopBtn   = document.getElementById("stop-btn");
+    const statusEl  = document.getElementById("batch-status");
+    const btnAll    = document.getElementById("batch-run-all-btn");
+    const btnFailed = document.getElementById("batch-run-failed-btn");
 
     try {
-        const res  = await fetch("/api/v1/runs/current");
-        const data = (await res.json()).data;
+        const res   = await fetch("/api/v1/runs/current");
+        const data  = (await res.json()).data;
+        const batch = data.batch;
+        const batchRunning = !!(batch && batch.status === "running");
 
         // progress_state.step goes straight from a running step token to
-        // "Idle" -- there is no "Done" state from the backend. Only reload
-        // if we were actually watching a run finish (isPolling); otherwise
-        // a page freshly loaded while already idle would reload itself.
-        if (data.step === "Idle" || data.step === "Done") {
+        // "Idle" -- there is no "Done" state from the backend. A batch keeps
+        // the engine busy between its own items even while step is
+        // momentarily Idle/Done, so don't treat that as "finished" mid-batch.
+        const busy = batchRunning || (data.step !== "Idle" && data.step !== "Done");
+
+        if (stopBtn) {
+            stopBtn.style.display = busy ? "inline-block" : "none";
+            if (busy) { stopBtn.disabled = false; stopBtn.textContent = "Stop"; }
+        }
+
+        if (batch && statusEl) {
+            const done = (batch.results || []).length;
+            statusEl.textContent =
+                `Batch (${batch.mode}): ${done}/${batch.items.length} — ${batch.status}`;
+        }
+
+        if (!busy) {
+            if (batch) {
+                // Batch is no longer running -- free the buttons back up.
+                if (btnAll)    btnAll.disabled = false;
+                if (btnFailed) btnFailed.disabled = false;
+            }
             if (isPolling) {
-                status.textContent = "Progress: Complete - Updating...";
+                text.textContent = "Progress: Complete - Updating...";
                 isPolling = false;
                 setTimeout(() => location.reload(), 1500);
             } else {
-                status.textContent = "Progress: Idle";
+                text.textContent = "Progress: Idle";
             }
             return;
         }
 
         isPolling = true;
-        status.textContent = `Progress: ${data.step} - ${data.testid} (${data.testtype})`;
+        text.textContent = (batchRunning && (data.step === "Idle" || data.step === "Done"))
+            ? "Progress: batch — preparing next item..."
+            : `Progress: ${data.step} - ${data.testid} (${data.testtype})`;
         setTimeout(poll, 2000);
     } catch (e) {
         console.error("Polling error:", e);

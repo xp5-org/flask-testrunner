@@ -11,7 +11,7 @@ from flask import Flask, render_template, send_from_directory, jsonify, request,
 from jinja2 import ChoiceLoader, FileSystemLoader
 import apphelpers, test_runner
 import runhelper
-import testid
+import apphelpers as testid
 from dbhelper import ReportDB, db
 from appstate import build_nav, nav
 from appstate import process_registry
@@ -24,6 +24,7 @@ from newprojecthelper import copybuildtest, copy_sourcedir, update_config_in_fil
 #######################################
 ### config stuff #####################
 app = Flask(__name__)
+app.jinja_env.filters["linkify"] = apphelpers.linkify
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 FLASKRUNNER_HELPERDIR = "/testrunnerapp/helpers"
@@ -276,7 +277,7 @@ def testfile_list():
             "display_name": info["id"],
             "module":       modname,
             "path":         apphelpers.project_relpath(info),
-            "group_key":    testid.group_key(info["id"], info.get("system")),
+            "container_id": testid.container_id(info["id"], info.get("system")),
             "types":        info["types"],
             "system":       info.get("system"),
             "platform":     info.get("platform"),
@@ -505,34 +506,46 @@ def clone_as_new():
 
 
 
-# test detail list. this is the page where multiple related variant tests are put into one view
-@app.route("/test/<path:test_id>")
-def test_details(test_id):
+# The container view: one page per __testparent__.py, listing its children.
+@app.route("/test/<path:container>")
+def test_details(container):
     report_name = request.args.get("report_name")
     test_runner.reload_tests()
 
-    # links from the index carry the slug id
-    # dot-path the registry and the DB are keyed by.
-    test_id     = testid.resolve(test_id, apphelpers.testfile_registry.keys()) or test_id
-    meta        = apphelpers.testfile_registry.get(test_id)
-    human_label = meta.get("id", test_id) if meta else test_id
+    children = testid.resolve_container(container, apphelpers.testfile_registry)
+    if not children:
+        return "Container not found", 404
 
-    all_summaries  = db.get_all_reports_summary(test_parent_name=human_label)
+    meta        = apphelpers.testfile_registry[children[0]]
+    human_label = meta["id"]
+
+    container_dirpath = None
+    full_path = meta.get("__full_path__")
+    if full_path:
+        container_dirpath = os.path.dirname(os.path.abspath(full_path))
+    container_parent = apphelpers.load_parent(container_dirpath) if container_dirpath else None
+    container_description = (container_parent or {}).get("description")
+    container_batch_all    = bool((container_parent or {}).get("batch_run_all"))
+    container_batch_failed = bool((container_parent or {}).get("batch_run_failed"))
+
+    all_summaries  = db.get_all_reports_summary(test_parent_name=human_label, per_parent_limit=3)
     latest_summary = db.get_latest_namedteststatus(human_label)
 
     summary_by_type = {}
     for s in latest_summary:
         if s["testparentname"] != human_label:
             continue
-        summary_types = s["types"] if isinstance(s.get("types"), list) else [s.get("test_types")]
+        types_field = s.get("types")
+        summary_types = types_field if isinstance(types_field, list) else [
+            t.strip() for t in (types_field or "").split(",") if t.strip()
+        ]
         for type_name in summary_types:
             summary_by_type.setdefault(type_name, []).append(s)
 
     all_mods = list(apphelpers.testfile_registry.keys())
     matching_tests = []
-    for modname, info in apphelpers.testfile_registry.items():
-        if info.get("id") != human_label:
-            continue
+    for modname in children:
+        info = apphelpers.testfile_registry[modname]
         test_copy = dict(info)
         test_copy["module"] = modname
         test_copy["slug"]   = testid.slug_for(modname, all_mods)
@@ -546,57 +559,80 @@ def test_details(test_id):
                 test_copy["latest_status"][type_name] = "FAIL"
             else:
                 test_copy["latest_status"][type_name] = "PASS"
+        test_copy["pause_label"] = _pause_step_label(modname)
         matching_tests.append(test_copy)
-
-    if not matching_tests:
-        return "Test not found", 404
 
     latest_summary = db.get_latest_report_summary(human_label)
     failure_logs   = db.get_failed_steps_log(human_label)
-    build_artifacts = db.get_latest_build_artifacts(test_id)
 
-    # If no artifacts stored yet (pre-dates this feature or never run),
-    # derive them live from the module CONFIG as a best-effort fallback
-    # todo - need to have emulator-specific steps to gather up build outputs
-    if not build_artifacts:
-        meta_module = apphelpers.testfile_registry.get(test_id)
-        if meta_module:
+    build_artifacts = []
+    seen_artifacts  = set()
+    for modname in children:
+        found = db.get_latest_build_artifacts(modname)
+        if not found:
             try:
-                cfg = _load_module_config(test_id)
+                cfg = _load_module_config(modname)
                 if cfg:
                     from repair_config import repair_config
                     repaired, _ = repair_config(cfg, cfg)
-                    build_artifacts = db.extract_build_artifacts(repaired)
+                    found = db.extract_build_artifacts(repaired)
             except Exception as e:
-                print(f"[test_details] artifact fallback failed for {test_id}: {e}")
+                print(f"[test_details] artifact fallback failed for {modname}: {e}")
+        for a in (found or []):
+            key = repr(a)
+            if key not in seen_artifacts:
+                seen_artifacts.add(key)
+                build_artifacts.append(a)
 
-    reports = []
+    reports_by_variant = {}
     for r in all_summaries:
         filename = os.path.basename(r[0])
-        if report_name is None or report_name in filename:
-            reports.append({
-                "filename":  filename,
-                "filepath":  r[0],
-                "duration":  r[1],
-                "status":    r[2],
-                "timestamp": r[3],
-            })
+        if report_name is not None and report_name not in filename:
+            continue
+        variant_id = r[4]
+        reports_by_variant.setdefault(variant_id, []).append({
+            "filename":  filename,
+            "filepath":  r[0],
+            "duration":  r[1],
+            "status":    r[2],
+            "timestamp": r[3],
+        })
 
-    reports.sort(key=lambda r: r["timestamp"], reverse=True)
-    reports = reports[:5]
+    for variant_reports in reports_by_variant.values():
+        variant_reports.sort(key=lambda r: r["timestamp"], reverse=True)
+
+    for test_copy in matching_tests:
+        test_copy["reports"] = reports_by_variant.get(test_copy["module"], [])
 
     return render_template(
         "test_detail.html",
         testname=human_label,
         test_info=matching_tests,
-        reports=reports,
-        internal_id=test_id,
-        slug=testid.slug_for(test_id, all_mods),
+        slug=container,
         project_path=apphelpers.project_relpath(meta),
+        container_description=container_description,
+        container_batch_all=container_batch_all,
+        container_batch_failed=container_batch_failed,
         latest_summary=latest_summary,
         failure_logs=failure_logs,
         build_artifacts=build_artifacts,
     )
+
+
+def _pause_step_label(modname: str) -> str | None:
+    """First 'pause_on' step in a testlist's CONFIG
+
+    Step numbering matches test_runner.run_tests' enumerate(steps, 1), so
+    STEPx here lines up with the unique_name test_runner logs/reports for
+    that same step. None if the test has no pause_on step.
+    """
+    cfg = _load_module_config(modname)
+    if not cfg:
+        return None
+    for i, step in enumerate(cfg.get("steps", []), 1):
+        if test_runner._pause_flag(step.get("pause_on", False)):
+            return f"PAUSE - STEP{i}"
+    return None
 
 
 # for testbuilder
@@ -616,7 +652,7 @@ def _load_module_config(src_module: str) -> dict | None:
         return None
 
 
-# test des
+# test desc
 
 @app.route("/api/test_description/<path:test_id>", methods=["GET", "POST"])
 def api_test_description(test_id):
@@ -664,9 +700,8 @@ def api_build_artifacts(test_id):
     Response: {artifacts: [{artifact_key, artifact_path, exists_on_disk, file_size}]}
 
     Accepts a slug or a module dot-path. Both the DB and testfile_registry are
-    keyed by dot-path, so the id has to be resolved first -- and the registry
-    has to be loaded before it can resolve anything, or every id looks unknown
-    and this returns an empty list whichever form was passed.
+    keyed by dot-path, so the id has to be resolved first
+
     See GET /api/v1/tests/<id>/artifacts, which does the same thing.
     """
     test_runner.reload_tests()
@@ -727,8 +762,8 @@ def scan_drivers():
           "drivers": [
             {
               "filename":    "c64-reu.emd",
-              "path_token":  "{src}c64-reu.emd",   -- ready to paste into driver1_path
-              "label":       "c64-reu",             -- stem, hyphens kept (sanitized in assemble_object)
+              "path_token":  "{src}c64-reu.emd",
+              "label":       "c64-reu",
               "ext":         ".emd"
             },
             ...

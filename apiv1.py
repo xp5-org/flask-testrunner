@@ -8,14 +8,13 @@ import apphelpers
 import test_runner
 import dispatchhelper
 import runhelper
-import testid
+import apphelpers as testid
 from dbhelper import db
-from appstate import progress_state, process_registry, run_registry
+from appstate import progress_state, process_registry, run_registry, batch_registry
 from repair_config import repair_config, apply_step_param_fixes
 from step_validator import validate_config_steps, format_results_text, has_blocking_issues
 from newprojecthelper import copybuildtest, update_config_in_file
 
-# Paths — kept in sync with app.py's constants.
 TESTLIST_ROOT       = "/testsrc/sourcedir"
 TESTSRC_HELPERDIR   = "/testsrc/pyhelpers"
 
@@ -164,8 +163,11 @@ def index():
                      "subaction": ""},
             "id": "URL-safe slug (owc-clonetest2.86box). The module dot-path is "
                   "also accepted anywhere an id is taken.",
-            "grouping": "Tests sharing group_key are variants of one test and "
-                        "belong on one row, one button per variant.",
+            "container": "A source directory declaring a __testparent__.py. "
+                         "Tests sharing container_id are its children and "
+                         "belong on its one row, one button each. Only a "
+                         "container has a page (/test/<container_id>); a "
+                         "testlist is addressed only by the run/edit APIs.",
         },
         "envelope": {
             "success": {"data": "<payload>", "links": {"<rel>": "<url>"}},
@@ -248,7 +250,7 @@ def actions():
     return ok({"actions": catalog, "helper_dir": TESTSRC_HELPERDIR})
 
 
-# ── Tests: discovery + edit lifecycle ─────────────────────────────────────────
+
 
 @api_v1.route("/tests")
 def list_tests():
@@ -269,7 +271,7 @@ def list_tests():
             "module":        modname,
             "display_name":  info["id"],
             "path":          apphelpers.project_relpath(info),
-            "group_key":     testid.group_key(info["id"], system),
+            "container_id":  testid.container_id(info["id"], system),
             "group_label":   info["id"],
             "variants":      [
                 {"variant": t,
@@ -307,9 +309,30 @@ def config_schema():
         if info.get("system")
     })
 
+    known_parents = sorted({
+        info["id"] for info in apphelpers.testfile_registry.values() if info.get("id")
+    })
+
     # need to organize this
     data = {
         "summary": "Fields of the CONFIG dict in a __testlist__*.py file.",
+        "containers": {
+            "how": "Every source directory holds one __testparent__.py "
+                   "declaring PARENT = {name, archtype, platform}. called "
+                   "container. It is a bookmark",
+            "children": "Each __testlist__*.py in that directory names the "
+                        "container in CONFIG['parent'] and contributes"
+                        "one button, labelled by CONFIG['function'].",
+            "rule": "CONFIG['parent'] must equal the directory stub's name "
+                    "exactly, or the testlist fails to load.",
+            "stub_fields": {
+                "name": "Container name. The row's display_name/group_label.",
+                "archtype": "Uppercased into `system`, the second half of the "
+                            "row identity. In use: %s" % ", ".join(known_systems),
+                "platform": "Section heading the row is filed under.",
+            },
+            "in_use": known_parents,
+        },
         "authoring_modes": {
             "steps": {
                 "how": "CONFIG['steps'] is a list of {action, param, subaction}.",
@@ -324,53 +347,44 @@ def config_schema():
                        "in decoration order.",
                 "use_when": "The test drives a helper directly (dosboxhelpers, "
                             "box86helpers, basiliskhelpers). Not editable via "
-                            "the steps API -- edit the .py file.",
+                            "the steps API",
                 "note": "run_testfile() clears the step registry and imports "
                         "only the target module, so decorated steps from other "
                         "testlists never leak into a run.",
             },
         },
         "fields": [
-            {"key": "testname", "required": True, "type": "string",
-             "controls": "Row identity, exposed as display_name/group_label.",
-             "gotcha": "Tests sharing a testname AND system are treated as "
-                       "variants of one thing and render as a SINGLE row "
-                       "(see group_key on /api/v1/tests). Give variants of one "
-                       "test the same testname; give unrelated tests different "
-                       "ones.",
-             "example": "OWC_CLONETEST2"},
-            {"key": "testtype", "required": True, "type": "string",
-             "controls": "The variant label, the per-variant run button, and "
-                         "the key that pass/fail status is stored under.",
-             "gotcha": "Must be unique among variants sharing a testname, or "
+            {"key": "parent", "required": True, "type": "string",
+             "controls": "Which container this testlist belongs to. Supplies "
+                         "the row's display_name/group_label and, via the "
+                         "stub, its system and platform.",
+             "info": "Must match the name in this directory's "
+                       "__testparent__.py character for character; a mismatch "
+                       "is a load error",
+             "in_use": known_parents,
+             "example": "OWC_VGAPLAY_v1"},
+            {"key": "function", "required": True, "type": "string",
+             "controls": "This test's button under its parent, and the key "
+                         "that pass/fail status is stored under.",
+             "info": "Must be unique among the children of one container, or "
                        "they overwrite each other's status on that row. Also "
-                       "prefixes decorated step names as '<testtype> N - <step>'.",
+                       "prefixes decorated step names as '<function> N - <step>'.",
              "in_use": known_types,
              "example": "build | dosbox | 86box"},
-            {"key": "archtype", "required": True, "type": "string",
-             "controls": "Uppercased into `system`, which is the second half "
-                         "of the row identity.",
-             "in_use": known_systems, "example": "i386"},
-            {"key": "platform", "required": True, "type": "string",
-             "controls": "Section heading the row is filed under.",
-             "example": "MSDOS i386"},
             {"key": "description", "required": False, "type": "string",
-             "controls": "Nothing at runtime -- free prose saying what the "
-                         "test is for or why it exists, surfaced on the "
+             "controls": "saying what the test is for or why it exists, on the "
                          "testbuilder page and in the registry listing.",
-             "gotcha": "Documentation only. Never referenced by a step, and "
+             "info": "Documentation only. Never referenced by a step, and "
                        "not a {token} anything resolves against. For why an "
                        "individual STEP is there rather than the whole test, "
                        "see the per-step \"description\" key instead (sibling "
                        "of a step's action/param/subaction, not part of "
-                       "CONFIG).",
-             "example": "Regression guard for the SB16 DMA rework -- fails if "
-                        "the Watcom build stops linking the driver."},
+                       "CONFIG)."},
             {"key": "tags", "required": False, "type": "list[string]",
-             "controls": "Nothing at runtime -- searchable labels (e.g. "
-                         "\"floppy\", \"sound\", \"boot\") surfaced on /tests "
+             "controls": "searchable labels (e.g. "
+                         "\"floppy\", \"sound\", \"boot\") on /tests "
                          "and filterable in the testbuilder's test picker.",
-             "gotcha": "Documentation only, same as description. Free text, "
+             "info": "Documentation only, same as description. Free text, "
                        "no fixed vocabulary yet.",
              "example": ["floppy", "boot", "watcom"]},
             {"key": "projbasedir", "required": True, "type": "string",
@@ -380,7 +394,7 @@ def config_schema():
              "controls": "Declarative path tree. init_test_env() walks it and "
                          "returns PATHS; '_rel' is the directory name and any "
                          "other key becomes a PATHS entry.",
-             "gotcha": "Values interpolate {placeholders} from other CONFIG "
+             "info": "Values interpolate {placeholders} from other CONFIG "
                        "keys, so '{projname}' or '{config_file}' resolve "
                        "against this same dict.",
              "example": {"project": {"_rel": "{projname}",
@@ -399,8 +413,7 @@ def config_schema():
             "filename": "Must start with '__testlist__' or reload_tests() will "
                         "not discover it.",
             "id": "Derived from the module dot-path; see the 'identity' block.",
-            "must_call": "PATHS = init_test_env(CONFIG, __name__) at import "
-                         "time -- that is what registers the file.",
+            "must_call": "PATHS = init_test_env(CONFIG, __name__) at import ",
         },
         "identity": {
             "canonical": "module dot-path, e.g. "
@@ -408,14 +421,13 @@ def config_schema():
             "id": "URL/HTML-safe slug derived from it, e.g. "
                   "owc-clonetest2.86box. Every endpoint accepts either form. "
                   "HTML reports on disk are named by the slug too.",
-            "path": "The testlist's directory, relative to /testsrc (e.g. "
-                    "'sourcedir/OWC_CLONETEST2') -- where to actually go to "
-                    "edit its code. Unlike id/slug it is not lowercased or "
-                    "hyphenated, so it matches the real directory name "
-                    "exactly. None if the module was registered but its file "
-                    "no longer exists on disk.",
-            "group_key": "testname + system, slugified. Clients should group "
-                         "rows on this rather than recomputing it.",
+            "path": "The testlist's directory, relative to /testsrc, so you can "
+                    "edit its code. it matches the real directory name "
+                    "exactly.",
+            "container_id": "The declared container this testlist belongs to, "
+                            "slugified. Clients should group rows on this "
+                            "rather than recomputing it, and it is the id the "
+                            "container's page is served under.",
         },
         "reload": {
             "testlists": "Re-imported on every /api/v1/tests call.",
@@ -430,13 +442,17 @@ def config_schema():
                      "target_id": "<new testlist name>",
                      "…": "any other key is applied as a CONFIG override"},
             "variant_example": {
-                "src_module": "OWC_CLONETEST2.__testlist__OWC_CLONETEST2_build",
+                "src_module": "OWC_VGAPLAY_v1.__testlist__OWC_CLONETEST2_build",
                 "target_id": "OWC_CLONETEST2_dosbox",
-                "testname": "OWC_CLONETEST2",
-                "testtype": "dosbox"},
-            "variant_note": "Keeping testname and changing testtype is what "
-                            "makes the new test appear as another button on "
-                            "the same row instead of a new row.",
+                "function": "dosbox"},
+            "variant_note": "Cloning into the same directory adds another "
+                            "button to that directory's container and treats them like groped tests"
+                            "__testparent__.py  names its parent container. the new "
+                            "child's parent is pinned to it. only 'function' "
+                            "needs to change (and must not collide with a "
+                            "sibling's). Cloning into a NEW directory creates a "
+                            "new container: pass 'parent' to name it, or it "
+                            "takes the target_id slug.",
         },
     }
     return ok(data, links={"actions": "/api/v1/actions",
@@ -479,7 +495,7 @@ def get_test(test_id):
         "module":        modname,
         "display_name":  meta["id"],
         "path":          apphelpers.project_relpath(meta),
-        "group_key":     testid.group_key(meta["id"], meta.get("system")),
+        "container_id":  testid.container_id(meta["id"], meta.get("system")),
         "group_label":   meta["id"],
         "system":        meta.get("system"),
         "platform":      meta.get("platform"),
@@ -680,7 +696,14 @@ def runs_current():
         "step_name": progress_state.step_name,
         "processes": process_registry.snapshot(),
         "busy":      runhelper.is_busy(),
+        "batch":     batch_registry.current(),
     })
+
+
+@api_v1.route("/runs/current/stop", methods=["POST"])
+def stop_current_run():
+    stopped = runhelper.request_stop()
+    return ok({"stop_requested": stopped})
 
 
 @api_v1.route("/runs/<run_id>")
@@ -703,6 +726,71 @@ def run_status(run_id):
 
     return ok(row, links=links)
 
+
+def _failed_container_children(children):
+    """module names whose latest run had a FAIL/ERROR status for
+    at least one of their test types 
+    """
+    meta        = apphelpers.testfile_registry[children[0]]
+    human_label = meta["id"]
+
+    summary_by_type = {}
+    for s in db.get_latest_namedteststatus(human_label):
+        if s["testparentname"] != human_label:
+            continue
+        types_field = s.get("types")
+        types = types_field if isinstance(types_field, list) else [
+            t.strip() for t in (types_field or "").split(",") if t.strip()
+        ]
+        for type_name in types:
+            summary_by_type.setdefault(type_name, []).append(s)
+
+    failed = []
+    for modname in children:
+        info = apphelpers.testfile_registry[modname]
+        for type_name in info.get("types", {}):
+            type_summary = summary_by_type.get(type_name, [])
+            if any(s["status"] in ("FAIL", "ERROR") for s in type_summary):
+                failed.append(modname)
+                break
+    return failed
+
+
+@api_v1.route("/containers/<path:container>/batch-runs", methods=["POST"])
+def container_batch_runs(container):
+    _ensure_registry()
+
+    body = request.get_json(silent=True) or {}
+    mode = body.get("mode", "all")
+    if mode not in ("all", "failed"):
+        return err("bad_request", "mode must be 'all' or 'failed'", 400)
+
+    children = testid.resolve_container(container, apphelpers.testfile_registry)
+    if not children:
+        return err("not_found", f"Unknown container: {container}", 404)
+
+    items = children if mode == "all" else _failed_container_children(children)
+    if not items:
+        return err("bad_request", "No failed tests to re-run", 400)
+
+    try:
+        batch_id = runhelper.launch_batch(container, mode, items)
+    except runhelper.RunBusyError as e:
+        return err("run_in_progress", str(e), 409)
+
+    return ok(
+        {"batch_id": batch_id, "status": "running", "mode": mode, "count": len(items)},
+        links={"self": f"/api/v1/batches/{batch_id}"},
+        status=202,
+    )
+
+
+@api_v1.route("/batches/<batch_id>")
+def batch_status(batch_id):
+    row = batch_registry.get(batch_id)
+    if not row:
+        return err("not_found", f"Unknown batch: {batch_id}", 404)
+    return ok(row)
 
 
 
