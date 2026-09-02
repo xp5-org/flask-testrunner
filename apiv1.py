@@ -769,7 +769,11 @@ def container_batch_runs(container):
     if not children:
         return err("not_found", f"Unknown container: {container}", 404)
 
-    items = children if mode == "all" else _failed_container_children(children)
+    if mode == "all":
+        items = [m for m in children
+                 if not apphelpers.testfile_registry[m].get("batch_exclude")]
+    else:
+        items = _failed_container_children(children)
     if not items:
         return err("bad_request", "No failed tests to re-run", 400)
 

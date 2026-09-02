@@ -145,11 +145,12 @@ def _add_to_registry(registry, description, func):
     return func
 
 
-def register_testfile(id, types, description=None, tags=None, system=None, platform=None):
+def register_testfile(id, types, description=None, tags=None, system=None, platform=None,
+                       batch_exclude=False):
     def decorator(module):
         modname = module.__name__
         types_dict = {t: modname for t in types} if isinstance(types, list) else types
-        
+
         testfile_registry[modname] = {
             "id": id,
             "types": types_dict,
@@ -157,6 +158,7 @@ def register_testfile(id, types, description=None, tags=None, system=None, platf
             "tags": tags or [],
             "system": system,
             "platform": platform,
+            "batch_exclude": bool(batch_exclude),
         }
         return module
     return decorator
@@ -168,18 +170,11 @@ def registry_warnings():
     Both kinds here are decidable from the data:
 
     - duplicate_parent: two directories declare the same container name+arch
-      in their __testparent__.py, so two separate containers render as one row.
+      in their __testparent__.py
     - duplicate_testtype: two files share the same testname+system+testtype,
-      so their run buttons carry the same label and their status history
-      (keyed by testname+testtype in the report DB) collides. That is a
-      demonstrable clash -- two testlists cannot both own one key.
+      status history is keyed by testname+testtype in the reportDB collision 
     """
     warnings = []
-
-    # Two directories claiming one container name+arch merge into a single row
-    # even though they are separate containers -- provable from the stubs, no
-    # inference: each directory states its own name, and two states either
-    # match or they don't.
     by_container = {}
     for modname, info in testfile_registry.items():
         path = project_relpath(info)
@@ -282,6 +277,10 @@ def init_test_env(config, module_name):
         tags=config.get("tags"),
         system=parent["archtype"].upper(),
         platform=parent["platform"],
+        # Manual-only tests (e.g. long-running toolchain builds) opt out of
+        # "run all" batching -- they still show up individually and count
+        # for "run failed".
+        batch_exclude=config.get("batch_exclude", False),
     )(module)
     reset_step_counter()
     return paths
@@ -304,7 +303,9 @@ def resolve_meta(data, context):
                     break
                 resolved = new_resolved
             return resolved
-        except KeyError:
+        except (KeyError, IndexError, ValueError):
+            # Leave anything .format() can't parse
+            # as a real template exactly as it was.
             return data
     elif isinstance(data, list):
         return [resolve_meta(i, context) for i in data]
