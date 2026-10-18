@@ -45,13 +45,23 @@ def _build_summary_rows(results: list) -> str:
 
 
 def _build_screenshot_map(subdir_path: str) -> defaultdict:
+    """Map step number -> [(instance_label, filename), ...], sorted by label.
+
+    A step that screenshots several instances (test_sendcommand with no
+    `name` given hits every emulator in context) drops one
+    screenshot-<name>-<step>-<count>.png per instance, all sharing the same
+    step number -- the label lets _build_detail_sections tell them apart in
+    the report instead of just stacking anonymous images.
+    """
     screenshot_map = defaultdict(list)
     for fname in os.listdir(subdir_path):
         if fname.endswith((".png", ".gif")):
-            m = re.match(r"screenshot-[^-]+-(\d+)(?:-\d+)?\.(png|gif)$", fname)
+            m = re.match(r"screenshot-([^-]+)-(\d+)(?:-\d+)?\.(png|gif)$", fname)
             if m:
-                step_num = int(m.group(1))
-                screenshot_map[step_num].append(fname)
+                label, step_num = m.group(1), int(m.group(2))
+                screenshot_map[step_num].append((label, fname))
+    for step_num in screenshot_map:
+        screenshot_map[step_num].sort()
     return screenshot_map
 
 
@@ -179,6 +189,35 @@ def _build_artifacts_table(results: list, subdir_path: str) -> str:
     )
 
 
+def _build_image_cell(matching_images: list) -> str:
+    """Render one step's screenshot(s): a single <img> as before for one
+    image, or a compact table -- one row per instance, a small bold label
+    directly above its image -- when a step (e.g. test_sendcommand with no
+    `name`, which hits every instance in context) produced more than one.
+
+    Stacked vertically rather than side-by-side columns: the image-column
+    div is already only ~50% page width, so N images across would each
+    shrink to 1/N of that and become hard to read. Stacking keeps every
+    image at the column's full width; padding is kept tight (2px) so the
+    labels don't eat much of that space either.
+    """
+    if not matching_images:
+        return "<p>No screenshot available.</p>"
+
+    if len(matching_images) == 1:
+        _, img = matching_images[0]
+        return f'<img src="{img}" alt="{img}" style="max-width: 100%; border: 1px solid #ccc;">'
+
+    rows = "".join(
+        f'<tr><td style="padding: 2px; font-weight: bold; font-size: 0.85em;">{label}</td></tr>'
+        f'<tr><td style="padding: 0 2px 6px;">'
+        f'<img src="{img}" alt="{img}" style="max-width: 100%; display: block; border: 1px solid #ccc;">'
+        f'</td></tr>'
+        for label, img in matching_images
+    )
+    return f'<table style="width:100%; border-collapse: collapse;">{rows}</table>'
+
+
 def _build_detail_sections(results: list, screenshot_map: defaultdict, subdir_path: str) -> str:
     # Each step's name is already just "{i}_{func_name}" plus, when the
     # testlist gave the step a short "title", ": {title}" -- the header
@@ -188,13 +227,7 @@ def _build_detail_sections(results: list, screenshot_map: defaultdict, subdir_pa
     sections = []
     for idx, (header, status, color, output, stdout, duration, info) in enumerate(results, start=1):
         matching_images = screenshot_map.get(idx, [])
-        if matching_images:
-            img_tags = "\n".join(
-                f'<img src="{img}" alt="{img}" style="max-width: 100%; border: 1px solid #ccc;">'
-                for img in matching_images
-            )
-        else:
-            img_tags = "<p>No screenshot available.</p>"
+        img_tags = _build_image_cell(matching_images)
 
         # Artifacts are rendered once in the consolidated table near the top of
         # the report (see _build_artifacts_table); here we only strip the
@@ -243,6 +276,7 @@ def generate_report(
     report_dir: str,
     compile_logs_dir: str,
     testlist_name: str = "",
+    build_banner: str = "",
 ) -> None:
     """
     Render and write an HTML test report.
@@ -253,6 +287,8 @@ def generate_report(
         report_dir:       Base report directory (used to locate loose screenshots).
         compile_logs_dir: Directory holding compile logs to include in the report.
         testlist_name:    Human-readable name shown in the report heading.
+        build_banner:     Optional HTML line naming the build the run used
+                          (commit, md5, A/B slot) -- see buildhelper.
     """
     subdir_path = os.path.dirname(report_path)
     if subdir_path and not os.path.exists(subdir_path):
@@ -267,6 +303,7 @@ def generate_report(
 
     html = _load_template()
     html = html.replace("{{testlist_name}}", testlist_name)
+    html = html.replace("{{build_banner}}", build_banner or "")
     html = html.replace("{{summary_rows}}", summary_rows)
     html = html.replace("{{artifacts_table}}", artifacts_table)
     html = html.replace("{{detail_sections}}", detail_sections)

@@ -1,0 +1,386 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Step Matrix — {{ test_id }}</title>
+<style>
+  :root{
+    --line:#c9d0ce; --ink:#111; --dim:#666;
+    --pass:#1f7a3d; --pass-bg:#e2f3e6;
+    --fail:#a3271f; --fail-bg:#fbe3e1;
+    --warn:#a3711f; --warn-bg:#faeece;
+    --skip:#6b6b6b; --skip-bg:#ececec;
+    --pending:#8a8f98; --pending-bg:#f4f4f4;
+    --pause:#7b3fa0; --pause-bg:#f1e9f8;
+    --running:#a3711f; --running-bg:#fff2c9; --running-bg-lo:#fffaf0;
+  }
+  *{box-sizing:border-box;}
+  html,body{max-width:100%;overflow-x:hidden;}
+  body{margin:0;padding:8px 8px 60px;background:#fff;color:var(--ink);
+       font:12px/1.3 ui-monospace,"JetBrains Mono",Consolas,monospace;}
+  h1{font-size:13px;margin:0 0 6px;font-weight:700;text-wrap:balance;}
+  table{border-collapse:collapse;width:100%;table-layout:fixed;}
+  th,td{border:1px solid var(--line);padding:2px 6px;
+        white-space:normal;overflow-wrap:anywhere;vertical-align:top;}
+  th{background:var(--pending-bg);text-align:left;position:sticky;top:0;}
+  col.arrow{width:0.7em;}
+  col.idx{width:1.3em;}
+  col.group{width:12%;}
+  col.subgroup{width:14%;}
+  col.action{width:10%;}
+  col.phase{width:5.5em;}
+  col.duration{width:4.5em;}
+  col.status{width:5.5em;}
+  col.pause{width:3.4em;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--dim);white-space:nowrap;}
+  td.arrow{text-align:center;color:var(--running);font-weight:700;white-space:nowrap;}
+  td.action{color:var(--dim);}
+  td.group,td.subgroup{font-weight:700;}
+  td.subgroup{font-weight:400;}
+  td.status{text-align:center;font-weight:700;white-space:nowrap;}
+  tr.pass td.status{color:var(--pass);background:var(--pass-bg);}
+  tr.fail td.status{color:var(--fail);background:var(--fail-bg);}
+  tr.warn td.status{color:var(--warn);background:var(--warn-bg);}
+  tr.skip td.status{color:var(--skip);background:var(--skip-bg);}
+  tr.pending td.status{color:var(--pending);background:var(--pending-bg);}
+  tr.fail{background:var(--fail-bg);}
+  tr.running td{background:var(--running-bg);}
+  tr.running td.status{color:var(--running);background:var(--running-bg);}
+  @media (prefers-reduced-motion: no-preference){
+    tr.running td{animation:step-pulse 1.1s ease-in-out infinite;}
+  }
+  @keyframes step-pulse{
+    0%, 100%{background:var(--running-bg);}
+    50%{background:var(--running-bg-lo);}
+  }
+  td.pause{text-align:center;}
+  td.pause input{margin:0;cursor:pointer;}
+  /* A paused step has to be findable by eye in a 258-row table, and readable
+     as "the run stops HERE" without consulting the checkbox column. */
+  tr.paused td{background:var(--pause-bg);}
+  /* live run parked before this step */
+  tr.next td{background:var(--pause-bg);}
+  tr.next td.status{color:var(--pause);font-weight:700;}
+  tr.next td.arrow{color:var(--pause);}
+  tr.manual td{font-style:italic;}
+  td.pause input:disabled{cursor:default;opacity:.35;}
+  body #stepmatrix-float{bottom:34px;}
+  tr.pick{cursor:pointer;}
+  tr.pick:hover td{background:#f4f7fb;}
+  tr.picked td{box-shadow:inset 0 2px 0 #007bff, inset 0 -2px 0 #007bff;}
+  tr.paused td.idxcell{font-weight:700;}
+  tr.paused td.pause::after{content:"PAUSE";display:block;font-size:9px;
+                            font-weight:700;color:var(--pause);letter-spacing:0.03em;}
+  #banner{position:fixed;left:0;right:0;bottom:0;padding:5px 8px;font-size:11px;
+          border-top:1px solid var(--line);background:#fff;color:var(--dim);}
+  #banner b{color:var(--ink);}
+  #banner .err{color:var(--fail);font-weight:700;}
+</style>
+</head>
+<body>
+<h1 id="viewer-title">{{ test_id }}</h1>
+<table>
+<colgroup>
+  <col class="arrow"><col class="idx"><col class="group"><col class="subgroup"><col>
+  <col class="action"><col class="phase"><col class="duration"><col class="status">
+  <col class="pause">
+</colgroup>
+<thead>
+<tr><th></th><th>#</th><th>Group</th><th>Subgroup</th><th>Step</th><th>Action</th><th>Phase</th><th class="num">Duration</th><th>Status</th><th title="Stop the run here and hand the emulator over">Pause</th></tr>
+</thead>
+<tbody id="body"><tr><td colspan="10">Loading…</td></tr></tbody>
+</table>
+<div id="banner"></div>
+
+<script>
+const TEST_ID = {{ test_id | tojson }};
+let RESOLVED_MODULE = null;  // filled in from the matrix payload once loaded
+let lastRunningIndex = null; // so auto-scroll fires once per step, not every poll
+
+function statusClass(s){
+  if (!s) return "pending";
+  s = s.toUpperCase();
+  if (s === "PASS") return "pass";
+  if (s === "WARN") return "warn";
+  if (s === "SKIPPED") return "skip";
+  if (s === "FAIL" || s === "ERROR") return "fail";
+  return "pending";
+}
+function statusLabel(s){ return s ? s.toUpperCase() : "PENDING"; }
+
+// live_results only exists for steps the ACTIVE run has already finished --
+// populate_sqlite() (what /matrix's own "status" field is backed by) writes
+// nothing until the whole run ends, so this is the only real per-step
+// PASS/FAIL/SKIPPED signal while a run is in flight. See appstate.py /
+// test_runner.run_tests / apiv1.runs_current.
+async function fetchLiveRun(){
+  try{
+    const res = await fetch("/api/v1/runs/current");
+    const body = await res.json();
+    return body.data || null;
+  } catch(e){
+    return null;
+  }
+}
+
+let lastGoodPayload = null;  // survives a single bad poll instead of blanking the table
+
+// A pause write in flight freezes the 2s poll. The poll rebuilds the whole
+// tbody, so without this a checkbox clicked at the wrong moment is replaced
+// mid-request by a row rendered from the pre-write payload -- the box visibly
+// springs back and the user cannot tell whether the pause was saved.
+let writing = 0;
+
+// The poll repaints the banner every 2s, so a write's own message -- which
+// names the cell/step the override landed on, the thing the banded editor
+// cannot show -- gets a hold time it is allowed to stay up for.
+let bannerUntil = 0;
+function setBanner(html, holdMs){
+  document.getElementById("banner").innerHTML = html;
+  bannerUntil = holdMs ? Date.now() + holdMs : 0;
+}
+
+function describeOrigin(o){
+  if (!o) return "";
+  if (o.kind === "matrix") return `matrix ${o.source} · cell ${o.cell} · step ${o.step_id || o.index}`;
+  if (o.kind === "template") return `template ${o.source} · step ${o.step_id || o.index}`;
+  return `step ${o.entry} of the testlist`;
+}
+
+// One expanded step's pause flag. Which key in which entry that is depends on
+// where the step came from -- the API works that out from the provenance it
+// handed us; this just names the step by the number the report uses.
+async function setPause(index, on, el){
+  writing++;
+  setBanner(`<b>step ${index}</b>: ${on ? "setting" : "clearing"} pause…`);
+  try{
+    const res = await fetch(`/api/v1/tests/${encodeURIComponent(TEST_ID)}/steps/${index}/pause`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({pause_on: on})
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error((body.error && body.error.message) || res.status);
+    const o = (body.data && body.data.origin) || {};
+    setBanner(`<b>step ${index}</b>: pause ${body.data.pause_on ? "SET" : "cleared"} `
+              + `— written as an override on ${describeOrigin(o)}`, 8000);
+  } catch(e){
+    el.checked = !on;   // the file did not change, so neither should the box
+    setBanner(`<span class="err">step ${index}: ${e}</span>`, 15000);
+  } finally {
+    writing--;
+    load();
+  }
+}
+
+let LIVE = null;  // full session of an interactive run of this test, when there is one
+// A pending row clicked in the live table: the floating widget's "Run to…"
+// targets it. Kept by uid so it survives the 2s re-render and live edits.
+let PICKED_UID = null;
+window.__stepmatrixSelectedUid = () =>
+  (LIVE && PICKED_UID && LIVE.pending.some(p => p.uid === PICKED_UID)) ? PICKED_UID : null;
+
+// A breakpoint on a step of the LIVE run: written to the draft the run
+// follows (by uid), so the run sees it at its next boundary. The file-backed
+// setPause above would write the .py, which a live run never re-reads.
+async function setPauseLive(uid, on, el){
+  writing++;
+  setBanner(`<b>${uid}</b>: ${on ? "setting" : "clearing"} breakpoint…`);
+  try{
+    const res = await fetch(`/api/v1/tests/${encodeURIComponent(TEST_ID)}/draft/ops`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ops: [{op: "set_pause", uid: uid, pause_on: on}],
+                            note: `${on ? "set" : "cleared"} breakpoint from matrix`})
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error((body.error && body.error.message) || res.status);
+    setBanner(`breakpoint ${on ? "SET" : "cleared"} — draft r${body.data.draft.revision}; the run picks it up at its next step`, 6000);
+  } catch(e){
+    el.checked = !on;
+    setBanner(`<span class="err">${e}</span>`, 15000);
+  } finally {
+    writing--;
+    setTimeout(load, 1200);
+  }
+}
+
+window.addEventListener("stepmatrix:command", () => setTimeout(load, 400));
+
+async function load(){
+  if (writing > 0) return;
+  let payload;
+  try{
+    const res = await fetch(`/api/v1/tests/${encodeURIComponent(TEST_ID)}/matrix`);
+    const body = await res.json();
+    if (!res.ok) throw new Error((body.error && body.error.message) || res.status);
+    payload = body.data;
+  } catch(e){
+    // A step-heavy build (cmake configure/build, etc.) can transiently trip
+    // "No config file on disk" or similar reads on this shared mount -- if
+    // we've rendered successfully before, ride it out on stale data rather
+    // than blanking every step to PENDING and losing which test we're
+    // watching (RESOLVED_MODULE) until the next poll happens to land clean.
+    if (!lastGoodPayload){
+      document.getElementById("body").innerHTML = `<tr><td colspan="10">Error: ${e}</td></tr>`;
+    }
+    return;
+  }
+  lastGoodPayload = payload;
+  RESOLVED_MODULE = payload.module;
+
+  let steps = payload.steps || [];
+  const title = document.getElementById("viewer-title");
+
+  const run = await fetchLiveRun();
+  const isLiveHere = !!(run && run.busy && run.testname && run.testname === RESOLVED_MODULE);
+  const liveResults = isLiveHere ? (run.live_results || []) : [];
+  const runningIndex = isLiveHere ? liveResults.length + 1 : -1;  // 1-based step about to run/running
+
+  // An interactive run of THIS test: draw the run's own step list, not the
+  // file's. Once a step is inserted/deleted live, the file's numbering is no
+  // longer what is running, and overlaying live_results onto it would put
+  // statuses on the wrong rows.
+  LIVE = null;
+  if (isLiveHere && run.session && run.session.module === RESOLVED_MODULE){
+    try{
+      const r = await fetch(`/api/v1/runs/${encodeURIComponent(run.session.run_id)}/session`);
+      const b = await r.json();
+      if (r.ok) LIVE = b.data;
+    } catch(e){}
+  }
+  if (LIVE){
+    const n = LIVE.executed.length;
+    steps = LIVE.executed.map(r => ({
+        index: r.ordinal, title: (r.title || r.action) + (r.manual ? " (manual)" : r.recorded ? " (recorded)" : ""),
+        action: r.action, phase: r.phase, group: r.group, subgroup: r.subgroup,
+        pause_on: r.pause_on, uid: r.uid, live: "done", status: r.status, duration: r.duration,
+        manual: !!(r.manual || r.recorded)}))
+      .concat(LIVE.pending.map((p, i) => ({
+        index: n + i + 1, title: p.title, action: p.action, phase: p.phase,
+        group: p.group, subgroup: p.subgroup, pause_on: p.pause_on, uid: p.uid,
+        live: i === 0 ? (LIVE.state === "running" ? "running" : "next") : "pending"})));
+  }
+
+  title.textContent = payload.id
+    + (LIVE
+        ? ` — LIVE ${LIVE.state === "suspended" ? "SUSPENDED" : "RUNNING"}, step ${LIVE.executed.length + 1}/${steps.length}`
+          + (LIVE.source === "draft" ? ` (draft r${LIVE.draft_revision})` : "")
+        : isLiveHere
+        ? ` — LIVE, step ${runningIndex}/${steps.length}: ${run.step_name || ""}`
+        : (payload.report ? ` — report #${payload.report.report_id} (${payload.report.status})` : " — no run yet"));
+
+  // Merge consecutive rows that share the same non-null group/subgroup into
+  // one spreadsheet-style rowspan cell -- steps with no group/subgroup (a
+  // testlist with no step_matrix at all) just render one row each, blank.
+  const rows = [];
+  for(let i = 0; i < steps.length; i++){
+    const st = steps[i];
+
+    // Overlay live status/duration for this run when we're watching it:
+    // steps before runningIndex use the run's OWN result (may be SKIPPED if
+    // an earlier failure aborted and cascaded, may be FAIL if the testlist
+    // presses on with continue_on_failure), the running step itself gets a
+    // synthetic "running" state, and anything after it is simply not
+    // reached yet -- the matrix API's status there is left over from the
+    // PREVIOUS run and would be actively misleading here.
+    let status = st.status, duration = st.duration, cls, isRunning = false;
+    if (LIVE){
+      if (st.live === "done"){ cls = statusClass(status); }
+      else if (st.live === "running"){ status = "RUNNING"; duration = null; cls = "running"; isRunning = true; }
+      else if (st.live === "next"){ status = "NEXT"; duration = null; cls = "next"; isRunning = true; }
+      else { status = null; duration = null; cls = "pending"; }
+      if (st.manual) cls += " manual";
+    } else if (isLiveHere){
+      const live = liveResults[i];  // liveResults is 0-indexed, step.index is 1-based
+      if (live){
+        status = live.status; duration = live.duration; cls = statusClass(status);
+      } else if (st.index === runningIndex){
+        status = "RUNNING"; duration = null; cls = "running"; isRunning = true;
+      } else {
+        status = null; duration = null; cls = "pending";
+      }
+    } else {
+      cls = statusClass(status);
+    }
+
+    let groupSpan = 0, subSpan = 0;
+    const startsGroup = i === 0 || steps[i-1].group !== st.group || !st.group;
+    const startsSub = i === 0 || steps[i-1].subgroup !== st.subgroup || steps[i-1].group !== st.group || !st.subgroup;
+    if (startsGroup){
+      let j = i; while (j < steps.length && steps[j].group === st.group && st.group) j++;
+      groupSpan = Math.max(1, j - i);
+    }
+    if (startsSub){
+      let j = i; while (j < steps.length && steps[j].subgroup === st.subgroup && steps[j].group === st.group && st.subgroup) j++;
+      subSpan = Math.max(1, j - i);
+    }
+    const pickable = LIVE && st.live && st.live !== "done";
+    rows.push(`<tr class="${cls}${st.pause_on ? " paused" : ""}${pickable ? " pick" : ""}${pickable && st.uid === PICKED_UID ? " picked" : ""}"`
+      + (pickable ? ` data-pick="${st.uid}" title="click to make this the Run-to target"` : "") + `>`
+      + `<td class="arrow">${isRunning ? "&#9654;" : ""}</td>`
+      + `<td class="num idxcell">${st.index}</td>`
+      + (startsGroup ? `<td class="group" rowspan="${groupSpan}">${st.group || ""}</td>` : "")
+      + (startsSub ? `<td class="subgroup" rowspan="${subSpan}">${st.subgroup || ""}</td>` : "")
+      + `<td>${st.title || ""}</td>`
+      + `<td class="action">${st.action || ""}</td>`
+      + `<td class="action">${st.phase || ""}</td>`
+      + `<td class="num">${duration != null ? duration.toFixed(2) + "s" : "—"}</td>`
+      + `<td class="status">${statusLabel(status)}</td>`
+      + (LIVE
+          ? `<td class="pause"><input type="checkbox" data-uid="${st.uid}"`
+            + `${st.pause_on ? " checked" : ""}`
+            + `${st.live === "done" || !LIVE.follows_draft ? " disabled" : ""}`
+            + ` title="${st.live === "done" ? "already ran" : !LIVE.follows_draft
+                 ? "this run is not following a draft — live edits are off"
+                 : "breakpoint before this step (written to the draft the run follows)"}"></td>`
+          : `<td class="pause"><input type="checkbox" data-index="${st.index}"`
+            + `${st.pause_on ? " checked" : ""}`
+            + ` title="pause before step ${st.index} — ${describeOrigin(st.origin)}"></td>`)
+      + `</tr>`);
+  }
+  const body = document.getElementById("body");
+  body.innerHTML = rows.join("") || `<tr><td colspan="10">No steps.</td></tr>`;
+  body.querySelectorAll("input[type=checkbox][data-index]").forEach(el => {
+    el.onchange = () => setPause(Number(el.dataset.index), el.checked, el);
+  });
+  body.querySelectorAll("input[type=checkbox][data-uid]").forEach(el => {
+    el.onchange = () => setPauseLive(el.dataset.uid, el.checked, el);
+  });
+  body.querySelectorAll("tr[data-pick]").forEach(tr => {
+    tr.onclick = (e) => {
+      if (e.target.closest("input")) return;
+      PICKED_UID = (PICKED_UID === tr.dataset.pick) ? null : tr.dataset.pick;
+      body.querySelectorAll("tr.picked").forEach(x => x.classList.remove("picked"));
+      if (PICKED_UID) tr.classList.add("picked");
+      setBanner(PICKED_UID ? `Run-to target: <b>step ${tr.querySelector(".idxcell").textContent.trim()}</b> — use "Run to…" in the widget` : "Run-to target cleared", 5000);
+    };
+  });
+
+  const paused = steps.filter(s => s.pause_on).map(s => s.index);
+  if (LIVE && !writing && Date.now() > bannerUntil){
+    setBanner(`<b>live run</b> ${LIVE.state} · ${LIVE.executed.length} ran · ${LIVE.pending.length} pending`
+      + (LIVE.state === "suspended" && LIVE.detail ? ` · <span class="err">${LIVE.detail.split("\n")[0]}</span>` : "")
+      + ` — pause boxes on pending rows set breakpoints for this run`);
+  } else if (!writing && Date.now() > bannerUntil){
+    setBanner(steps.length
+      ? `<b>${steps.length}</b> expanded steps · `
+        + (paused.length
+            ? `pause set at <b>${paused.join(", ")}</b> — the run stops there and hands you the emulator`
+            : `no pause set — tick a box to stop the run before that step`)
+      : "");
+  }
+
+  const effectiveRunning = LIVE ? LIVE.executed.length + 1 : (isLiveHere ? runningIndex : null);
+  if (effectiveRunning !== null && effectiveRunning !== lastRunningIndex){
+    document.querySelector("tr.running, tr.next")?.scrollIntoView({block: "center", behavior: "smooth"});
+  }
+  lastRunningIndex = effectiveRunning;
+}
+
+load();
+setInterval(load, 2000);
+</script>
+<script>window.__DEFAULT_TEST_ID__ = TEST_ID; window.__MATRIX_PAGE__ = true;</script>
+{% include "_step_matrix_widget.html" %}
+</body>
+</html>

@@ -243,6 +243,68 @@ def _write_parent(directory, parent):
         )
 
 
+def parent_literal_keys(directory):
+    """PARENT keys in this directory's stub whose value is a plain literal.
+
+    A stub is ordinary Python and may compute a value (cully_llvm builds its
+    "description" from a module-level _DESCRIPTION that depends on whether
+    _toolchain/ exists). Machine-rewriting such a key would replace the
+    expression with a frozen snapshot of whatever it evaluated to this time,
+    silently killing that logic -- so the editor only offers to write keys
+    that are literals in the source, and reports the rest as read-only.
+
+    Returns (literal_keys, computed_keys). Both empty if there is no stub.
+    """
+    path = os.path.join(directory, TESTPARENT_FILE)
+    if not os.path.exists(path):
+        return set(), set()
+    with open(path, "r", encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), filename=path)
+    parent = _find_config_dict(tree, "PARENT")
+    if parent is None:
+        return set(), set()
+
+    literal, computed = set(), set()
+    for k, v in zip(parent.keys, parent.values):
+        if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
+            continue
+        try:
+            ast.literal_eval(v)
+        except (ValueError, SyntaxError):
+            computed.add(k.value)
+        else:
+            literal.add(k.value)
+    return literal, computed
+
+
+def update_parent_in_file(directory, updates):
+    """Rewrite keys of the PARENT dict in a directory's __testparent__.py.
+
+    Surgical on purpose: a stub can carry imports, comments and computed
+    values above PARENT (see parent_literal_keys), so this edits the named
+    keys in place and leaves every other line of the file untouched, rather
+    than regenerating the stub the way _write_parent() does for a brand new
+    directory.
+    """
+    path = os.path.join(directory, TESTPARENT_FILE)
+    if not os.path.exists(path):
+        raise ValueError(f"{directory} has no {TESTPARENT_FILE}")
+
+    _, computed = parent_literal_keys(directory)
+    blocked = sorted(k for k in updates if k in computed)
+    if blocked:
+        raise ValueError(
+            f"{', '.join(blocked)} is computed in {TESTPARENT_FILE} rather than "
+            f"written as a literal; edit the file directly to change it.")
+
+    update_config_in_file(path, updates, dict_name="PARENT")
+    # load_parent() caches per path string, and callers reach the same stub
+    # by more than one spelling (abs vs. joined), so clear the lot rather than
+    # guess which key this write invalidated -- stubs are tiny and re-read on
+    # the next render anyway.
+    apphelpers._parent_cache.clear()
+
+
 def _write_config(pyfile_path, repaired_config=None, **kwargs):
     """
     Write CONFIG changes to a testlist .py file.
@@ -269,17 +331,21 @@ def _write_config(pyfile_path, repaired_config=None, **kwargs):
         _update_scalars_only(pyfile_path, kwargs)
 
 
-def _find_config_dict(tree):
-    """The ast.Dict node assigned to CONFIG at module level, or None."""
+def _find_config_dict(tree, dict_name="CONFIG"):
+    """The ast.Dict node assigned to dict_name at module level, or None.
+
+    Defaults to CONFIG (a testlist). PARENT (a directory's
+    __testparent__.py) has the same shape, so the same rewriter serves both.
+    """
     for node in tree.body:
         if (isinstance(node, ast.Assign)
-                and any(isinstance(t, ast.Name) and t.id == "CONFIG" for t in node.targets)
+                and any(isinstance(t, ast.Name) and t.id == dict_name for t in node.targets)
                 and isinstance(node.value, ast.Dict)):
             return node.value
     return None
 
 
-def update_config_in_file(file_path, updates):
+def update_config_in_file(file_path, updates, dict_name="CONFIG"):
     """
     Rewrite CONFIG keys in a testlist .py file.
 
@@ -294,9 +360,9 @@ def update_config_in_file(file_path, updates):
     lines = src.splitlines(keepends=True)
 
     tree = ast.parse(src, filename=file_path)
-    config = _find_config_dict(tree)
+    config = _find_config_dict(tree, dict_name)
     if config is None:
-        raise ValueError(f"No top-level CONFIG = {{...}} dict found in {file_path}")
+        raise ValueError(f"No top-level {dict_name} = {{...}} dict found in {file_path}")
 
     entries = []  # (key, value_node) in source order, constant keys only
     for k, v in zip(config.keys, config.values):

@@ -13,6 +13,14 @@ class ProgressState:
         self.testtype = ""   # info like build test or test1 test type - for button label
         self.step_name = ""
         self.run_id = ""     # set by runhelper.launch_run(); see current_reports_dir()
+        self.live_results = []  # (name, status, color, output, stdout, duration, info)
+                                 # tuples appended in step order as the active
+                                 # run completes each one -- test_runner.run_tests
+                                 # writes it, /api/v1/runs/current reads it, so
+                                 # the step-matrix viewer can show real PASS/FAIL
+                                 # per step while a run is still in flight rather
+                                 # than only after populate_sqlite() writes the
+                                 # finished report at the very end.
 
 progress_state = ProgressState()
 

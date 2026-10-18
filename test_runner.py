@@ -13,8 +13,12 @@ import reporthelper
 import appstate
 from appstate import progress_state
 from dbhelper import db
+import stepplan
+import runsession
+import drafthelper
 import apphelpers
 import dispatchhelper
+import buildhelper
 import apphelpers as testid
 
 TESTSRC_HELPERDIR = "/testsrc/helpers"
@@ -43,6 +47,23 @@ context = {
 }
 
 TESTLIST_PREFIXES = ("__testlist__")
+
+# A step that succeeded (truthy first element of its (bool, str) return) can
+# still opt into WARN instead of PASS by printing a line starting with this
+# marker in its message -- same convention reporthelper.py already uses for
+# "ARTIFACT:" lines. This keeps the step-function contract untouched: every
+# existing dispatch_functions.py function's plain True/False keeps meaning
+# exactly PASS/FAIL, and nothing needs to widen its return type to pick up
+# WARN. A failing step (success is falsy) is never upgraded by this -- WARN
+# describes an expected, measured property of a passing run, not a softened
+# failure.
+WARN_MARKER = "TESTRUNNER_WARN:"
+
+
+def _has_warn_marker(text):
+    if not text:
+        return False
+    return any(line.strip().startswith(WARN_MARKER) for line in text.splitlines())
 
 
 class TestrunnerTimer:
@@ -80,7 +101,7 @@ def load_testfile_from_path(fpath):
         return mod
     except Exception as e:
         print(f"IMPORT ERROR: {modname}: {e}")
-        failed_loads.append(modname)
+        failed_loads.append({"module": modname, "error": str(e)})
         if modname in sys.modules:
             del sys.modules[modname]
         return None
@@ -99,34 +120,42 @@ def load_config_from_path(fpath):
         return None
 
     modname = "_configprobe_%s" % abs(hash(fpath))
-    saved_registry = dict(apphelpers.testfile_registry)
-    try:
-        spec = importlib.util.spec_from_file_location(modname, fpath)
-        if not (spec and spec.loader):
+    with apphelpers.registry_lock:
+        saved_registry = dict(apphelpers.testfile_registry)
+        try:
+            spec = importlib.util.spec_from_file_location(modname, fpath)
+            if not (spec and spec.loader):
+                return None
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[modname] = mod
+            spec.loader.exec_module(mod)
+            cfg = getattr(mod, "CONFIG", None)
+            return cfg if isinstance(cfg, dict) else None
+        except Exception as e:
+            print(f"[load_config_from_path] load error for {fpath}: {e}")
             return None
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[modname] = mod
-        spec.loader.exec_module(mod)
-        cfg = getattr(mod, "CONFIG", None)
-        return cfg if isinstance(cfg, dict) else None
-    except Exception as e:
-        print(f"[load_config_from_path] load error for {fpath}: {e}")
-        return None
-    finally:
-        sys.modules.pop(modname, None)
-        apphelpers.testfile_registry.clear()
-        apphelpers.testfile_registry.update(saved_registry)
+        finally:
+            sys.modules.pop(modname, None)
+            apphelpers.testfile_registry.clear()
+            apphelpers.testfile_registry.update(saved_registry)
 
 
-def reload_tests():
-    global failed_loads
-    failed_loads.clear()
-    apphelpers.clear_registries()
+# What the last full reload_tests() saw on disk, and the registry it built:
+# (signature, frozenset of module names). A reload whose scan matches both is
+# skipped -- re-importing every testlist costs hundreds of NFS round-trips and
+# every page load used to pay it, often twice.
+_last_load = None
 
-    if TESTSRC_ROOT not in sys.path:
-        sys.path.insert(0, TESTSRC_ROOT)
 
-    seen_modules = set()
+def _scan_testlists():
+    """Walk TESTSRC_ROOT for project dirs and their testlists.
+
+    Returns ([(project_dir, [testlist fnames])], signature). The signature is
+    every .py file's (path, mtime, size) in each project dir -- testlists, the
+    __testparent__.py stub and __testplan__.py alike, since an edit to any of
+    them changes what a reload produces. A new, removed or edited file changes
+    it; nothing else is read.
+    """
     # A project dir is any directory under TESTSRC_ROOT that has a
     # __testparent__.py beside its testlists. Different source trees nest
     # these at different depths
@@ -157,36 +186,89 @@ def reload_tests():
         _scan_for_project_dirs(top_dir, 1)
     project_dirs.sort()
 
+    projects, signature = [], []
     for project_dir in project_dirs:
         try:
             entries = os.scandir(project_dir)
         except OSError:
             continue
         with entries:
-            fnames = sorted(e.name for e in entries if e.is_file(follow_symlinks=False))
+            files = [e for e in entries if e.is_file(follow_symlinks=False)]
+        for e in files:
+            if e.name.endswith(".py"):
+                try:
+                    st = e.stat(follow_symlinks=False)
+                    signature.append((e.path, st.st_mtime_ns, st.st_size))
+                except OSError:
+                    signature.append((e.path, None, None))
+        projects.append((project_dir, sorted(e.name for e in files)))
+    return projects, tuple(sorted(signature))
 
-        for fname in fnames:
-            if fname == "__init__.py":
-                continue
-            # Extension check, not just the prefix: a compiled
-            # "__testlist__foo.cpython-313.pyc" starts with the marker too.
-            if not (fname.startswith(TESTLIST_PREFIXES) and fname.endswith(".py")):
-                continue
-            fpath = os.path.join(project_dir, fname)
 
-            # module name from relative path
-            rel_path = os.path.relpath(fpath, TESTSRC_ROOT)
-            modname = rel_path.replace(os.sep, ".")[:-3]
+def ensure_loaded():
+    """Full reload only if the registry isn't the one the last reload built.
 
-            if modname not in seen_modules:
-                # Load the module first so decorators populate the registry
-                load_testfile_from_path(fpath)
+    No disk scan: for readers that just need a populated registry and the
+    last reload's failed_loads (run_testfile() empties both on every run).
+    """
+    with apphelpers.registry_lock:
+        if _last_load is not None and _last_load[1] == frozenset(apphelpers.testfile_registry):
+            return
+    reload_tests(force=True)
 
-            # Only set __full_path__ if the module registered itself
-            if modname in apphelpers.testfile_registry:
-                apphelpers.testfile_registry[modname]["__full_path__"] = os.path.abspath(fpath)
 
-            seen_modules.add(modname)
+def reload_tests(force=False):
+    """Rebuild testfile_registry from disk, unless nothing changed.
+
+    Skipped when the testlist files on disk match the last reload AND the
+    registry still holds what that reload built (run_testfile() clears it and
+    imports only the module it runs). force=True always rebuilds.
+    """
+    global failed_loads, _last_load
+    # The walk happens outside the lock so concurrent readers aren't held up
+    # by directory I/O; only the compare-and-rebuild is serialized.
+    projects, signature = _scan_testlists()
+
+    # Serialize the whole clear-then-rebuild against any other thread that
+    # reloads or reads the registry -- see apphelpers.registry_lock.
+    with apphelpers.registry_lock:
+        if (not force and _last_load is not None
+                and _last_load[0] == signature
+                and _last_load[1] == frozenset(apphelpers.testfile_registry)):
+            return
+
+        failed_loads.clear()
+        apphelpers.clear_registries()
+
+        if TESTSRC_ROOT not in sys.path:
+            sys.path.insert(0, TESTSRC_ROOT)
+
+        seen_modules = set()
+        for project_dir, fnames in projects:
+            for fname in fnames:
+                if fname == "__init__.py":
+                    continue
+                # Extension check, not just the prefix: a compiled
+                # "__testlist__foo.cpython-313.pyc" starts with the marker too.
+                if not (fname.startswith(TESTLIST_PREFIXES) and fname.endswith(".py")):
+                    continue
+                fpath = os.path.join(project_dir, fname)
+
+                # module name from relative path
+                rel_path = os.path.relpath(fpath, TESTSRC_ROOT)
+                modname = rel_path.replace(os.sep, ".")[:-3]
+
+                if modname not in seen_modules:
+                    # Load the module first so decorators populate the registry
+                    load_testfile_from_path(fpath)
+
+                # Only set __full_path__ if the module registered itself
+                if modname in apphelpers.testfile_registry:
+                    apphelpers.testfile_registry[modname]["__full_path__"] = os.path.abspath(fpath)
+
+                seen_modules.add(modname)
+
+        _last_load = (signature, frozenset(apphelpers.testfile_registry))
 
 
 def run_registered_test(name, registry, context):
@@ -217,8 +299,12 @@ def run_registered_test(name, registry, context):
                     color = "red"
                 else:
                     if success:
-                        status = "PASS"
-                        color = "green"
+                        if _has_warn_marker(log_output):
+                            status = "WARN"
+                            color = "warn"
+                        else:
+                            status = "PASS"
+                            color = "green"
                     else:
                         status = "FAIL"
                         color = "red"
@@ -235,7 +321,11 @@ def run_registered_test(name, registry, context):
     return (name, "NOT FOUND", "gray", "No matching test found", "", 0.00, "")
 
 
-def run_testfile(module_name, state=None):
+def run_testfile(module_name, state=None, options=None):
+    """Run one testlist. `options` (all optional) carries the interactive-run
+    knobs from POST /api/v1/runs: interactive (False for batch items),
+    source (lkg|draft), mode, on_fault, suspend_timeout (minutes),
+    suspend_timeout_action -- see runsession.RunSession."""
     global failed_loads
     failed_loads.clear()
     
@@ -248,75 +338,105 @@ def run_testfile(module_name, state=None):
     # viewable until the next run replaces the context.
     appstate.live_context.publish(context, module_name)
 
-    meta = apphelpers.testfile_registry.get(module_name)
-    if not meta:
-        print(f"ERROR: {module_name} not found in testfile_registry")
-        if state:
-            state.step, state.test_name = "Error", "No registry entry"
-        return []
+    with apphelpers.registry_lock:
+        meta = apphelpers.testfile_registry.get(module_name)
+        if not meta:
+            print(f"ERROR: {module_name} not found in testfile_registry")
+            if state:
+                state.step, state.test_name = "Error", "No registry entry"
+            return []
 
-    full_path = meta.get("__full_path__")
-    if not full_path:
-        print(f"ERROR: no __full_path__ for {module_name}")
-        return []
+        full_path = meta.get("__full_path__")
+        if not full_path:
+            print(f"ERROR: no __full_path__ for {module_name}")
+            return []
 
-    apphelpers.clear_registries()
-    mod = load_testfile_from_path(full_path)
+        apphelpers.clear_registries()
+        mod = load_testfile_from_path(full_path)
     
+    session = None
+    # Which container this run belongs to, for build tracking. A/B runs
+    # (options["build_override"]) swap one CONFIG key for a registered
+    # build's snapshot; every run, A/B or not, records which build it used.
+    container_key = testid.container_id(meta.get("id"), meta.get("system"))
+    build_override = (options or {}).get("build_override")
+    # "Build A"/"Build B" on a build_tool: the opposite direction from
+    # build_override -- there's no existing build to swap in, this run IS
+    # what produces one. Slot's stored input (buildhelper.set_build_input)
+    # is merged onto CONFIG before the run, and the result is registered
+    # straight into that slot below once the run passes.
+    build_input_slot = (options or {}).get("build_input_slot")
+    build_attr = None
     if mod and hasattr(mod, "CONFIG") and "steps" in mod.CONFIG:
-            config = mod.CONFIG
-            proj_dir = "/testsrc/pyhelpers"
-            dispatch = dispatchhelper.load_step_dispatch(proj_dir)
-            
-            for i, step in enumerate(config["steps"], 1):
-                action = step.get('action', 'unknown')
-                subaction = step.get('subaction', 'unknown')
-                func_name = f"{action}"
-                func = dispatch.get(func_name)
-
-                step_desc = step.get("description")
-                step_title = step.get("title")
-                unique_name = f"{i}_{func_name}"
-                if step_title:
-                    unique_name = f"{unique_name}: {step_title}"
-
-                if func:
-                    kwargs = step.get("param", {}).copy()
-                    kwargs['context'] = context
-                    kwargs['config'] = config
-                    
-                    def step_wrapper(test_meta=None, f=func, kw=kwargs):
-                        try:
-                            return f(**kw)
-                        except Exception as e:
-                            return False, (
-                                f"Testrunner.py: PYTHON CRASH in {f.__name__}:\n"
-                                f"kwargs={kw}\n"
-                                f"{type(e).__name__}: {str(e)}"
-                            )
-
-                    step_wrapper.test_description = unique_name
-                    step_wrapper.test_info = step_desc or ""
-                    step_wrapper.my_test_type = config.get("function", "dispatchtest")
-                    step_wrapper.pause_on = _pause_flag(step.get("pause_on", False))
-                    step_wrapper.action = action
-
-                    all_tests.append(step_wrapper)
-                    test_descriptions.append(step_wrapper.test_description)
-                else:
-                    print(f"ERROR: Function {func_name} not found")
-
-                    def fail_wrapper(test_meta=None, *args, name=func_name, **kwargs):
-                        return False, f"Function {name} not found in dispatch"
-
-                    fail_wrapper.test_description = f"{unique_name} (Missing)"
-                    fail_wrapper.test_info = step_desc or ""
-                    fail_wrapper.my_test_type = config.get("function", "dispatchtest")
-
-                    all_tests.append(fail_wrapper)
-                    test_descriptions.append(fail_wrapper.test_description)
-
+        config = mod.CONFIG
+        if build_input_slot:
+            input_overrides = buildhelper.get_build_inputs(container_key).get(build_input_slot) or {}
+            if input_overrides:
+                config = {**config, **input_overrides}
+        override_build = None
+        if build_override:
+            try:
+                config, override_build = buildhelper.apply_override(config, build_override)
+            except buildhelper.BuildError as e:
+                print(f"ERROR: {module_name}: {e}")
+                if state:
+                    state.step, state.test_name = "Error", str(e)
+                return []
+        dispatch = dispatchhelper.load_step_dispatch("/testsrc/pyhelpers")
+        # The container plan is captured here, once: expansion inside the
+        # session always uses this copy, so an edit to __testplan__.py
+        # mid-run cannot reach a run already past its boot line.
+        try:
+            plan = (stepplan.load_plan(os.path.dirname(os.path.abspath(full_path)))
+                    if stepplan.has_references(config) else None)
+            # strict: a misspelt template id aborts the run rather than
+            # quietly running a shorter test, which would look like a pass.
+            session = runsession.RunSession(
+                run_id=getattr(state, "run_id", "") or module_name,
+                module=module_name, full_path=full_path, config=config,
+                raw_steps=config.get("steps") or [], plan=plan,
+                dispatch=dispatch, context=context,
+                interactive=bool((options or {}).get("interactive", True)),
+                # No explicit source: an interactive run uses whichever
+                # version the user made active; batch items always the .py.
+                source=((options or {}).get("source")
+                        or ("draft" if (options or {}).get("interactive", True)
+                            and drafthelper.is_active(full_path) else "lkg")),
+                mode=(options or {}).get("mode"),
+                on_fault=(options or {}).get("on_fault"),
+                suspend_timeout=(options or {}).get("suspend_timeout"),
+                suspend_timeout_action=(options or {}).get("suspend_timeout_action"),
+            )
+        except (stepplan.PlanError, ValueError) as e:
+            print(f"ERROR: {module_name}: {e}")
+            if state:
+                state.step, state.test_name = "Error", str(e)
+            return []
+        if override_build is not None:
+            try:
+                buildhelper.check_referenced(session.config, override_build, session.plan)
+            except buildhelper.BuildError as e:
+                print(f"ERROR: {module_name}: {e}")
+                if state:
+                    state.step, state.test_name = "Error", str(e)
+                return []
+        try:
+            build_attr = buildhelper.attribute(container_key, session.config, build_override)
+            if build_input_slot:
+                # Force the slot label -- attribute()'s auto-detect only
+                # matches an EXISTING file's md5 against a registered build,
+                # which for a build_tool is still the previous run's binary
+                # at this point (this one hasn't compiled yet).
+                build_attr = dict(build_attr or {}, slot=build_input_slot)
+        except Exception as e:
+            print(f"[buildhelper] attribution failed for {module_name}: {e}")
+        runsession.sessions.add(session)
     else:
+        if build_override:
+            print(f"ERROR: {module_name}: A/B build override needs a CONFIG-steps testlist")
+            if state:
+                state.step, state.test_name = "Error", "build override unsupported"
+            return []
         for registry in apphelpers.registry_map.values():
             for f in registry:
                 desc = getattr(f, "test_description", None)
@@ -335,16 +455,25 @@ def run_testfile(module_name, state=None):
             state.testtype = config.get("function", "")
             state.testname = module_name
 
-    if not all_tests:
-        print(f"FINISHED: No tests found after loading {module_name}")
-        if state:
-            state.step = "Done"
-            state.test_name = "No tests found"
-        return []
-
-    print(f"Found {len(all_tests)} tests to run for {module_name}.")
-    continue_on_failure = bool(config.get("continue_on_failure", False))
-    results = run_tests(test_descriptions, all_tests, context, module_name, continue_on_failure)
+    if session is not None:
+        if not session.plan:
+            print(f"FINISHED: No tests found after loading {module_name}")
+            if state:
+                state.step = "Done"
+                state.test_name = "No tests found"
+            return []
+        print(f"Found {len(session.plan)} steps to run for {module_name}.")
+        results = session.run()
+    else:
+        if not all_tests:
+            print(f"FINISHED: No tests found after loading {module_name}")
+            if state:
+                state.step = "Done"
+                state.test_name = "No tests found"
+            return []
+        print(f"Found {len(all_tests)} tests to run for {module_name}.")
+        continue_on_failure = bool(config.get("continue_on_failure", False))
+        results = run_tests(test_descriptions, all_tests, context, module_name, continue_on_failure)
 
     # A GIF recorder started by test_start_gif_capture normally stops itself
     # when the next step begins, but one started by the LAST step is still
@@ -361,11 +490,15 @@ def run_testfile(module_name, state=None):
             print(f"[gifcapture] failed to stop recorder: {type(e).__name__}: {e}")
 
     def get_start(name):
-        ts = TestrunnerTimer.get_start(name)
+        ts = session.get_start(name) if session is not None else None
+        if ts is None:
+            ts = TestrunnerTimer.get_start(name)
         return ts if ts is not None else time.time()
 
     def get_stop(name):
-        ts = TestrunnerTimer.get_stop(name)
+        ts = session.get_stop(name) if session is not None else None
+        if ts is None:
+            ts = TestrunnerTimer.get_stop(name)
         if ts is not None:
             return ts
         dur = next((d for n, s, c, o, out, d, info in results if n == name), 0.0)
@@ -384,12 +517,23 @@ def run_testfile(module_name, state=None):
     # id in /test/<id> are the one identifier rather than two spellings of it.
     slug = testid.slug_for(module_name, apphelpers.testfile_registry.keys())
     report_path = os.path.join(subdir_path, f"{slug}.html")
+
+    if session is not None:
+        # Where the steps came from (LKG / draft revision), what was edited,
+        # retried or ignored mid-run -- the report's own rows cannot carry it.
+        try:
+            import json
+            with open(os.path.join(subdir_path, "session.json"), "w", encoding="utf-8") as f:
+                json.dump(session.snapshot(), f, indent=2, default=str)
+        except Exception as e:
+            print(f"[session] could not write session.json: {e}")
     reporthelper.generate_report(
         results=results,
         report_path=report_path,
         report_dir=REPORT_DIR,
         compile_logs_dir=compile_logs_dir,
         testlist_name=module_name,
+        build_banner=buildhelper.report_banner_html(build_attr),
     )
 
     raw_types = meta.get("types", {})
@@ -404,7 +548,7 @@ def run_testfile(module_name, state=None):
     # not a string each child repeats for itself.
     config_testparentname = meta.get("id") or module_name
 
-    db.populate_sqlite(
+    report_id = db.populate_sqlite(
         test_id=module_name,
         testparentname=config_testparentname,
         test_types=test_types,
@@ -414,6 +558,20 @@ def run_testfile(module_name, state=None):
         get_start=get_start,
         get_stop=get_stop
     )
+
+    try:
+        buildhelper.record_run(report_id, container_key, module_name, build_attr)
+        # A passing tool run registers what it built. A failed one doesn't:
+        # the output path usually still holds the PREVIOUS build then.
+        passed = not any((r[1] or "").upper() in ("FAIL", "ERROR") for r in results)
+        if meta.get("is_tool") and passed and session is not None:
+            new_ids = buildhelper.register_from_run(
+                container_key, module_name, config.get("function", ""),
+                report_id, session.config, slot=build_input_slot)
+            if new_ids:
+                print(f"[buildhelper] registered build(s) {new_ids} for {container_key}")
+    except Exception as e:
+        print(f"[buildhelper] build bookkeeping failed for {module_name}: {e}")
 
     if state:
         state.step = "Done"
@@ -510,7 +668,12 @@ def run_tests(test_descriptions, registry, context, module_name, continue_on_fai
         progress_state.step_name = "No tests found"
         return []
 
+    def _publish(entry):
+        results.append(entry)
+        progress_state.live_results.append(entry)
+
     # append steps during testrun
+    progress_state.live_results = []
     for index, test_func in enumerate(unique_tests, start=1):
         test_name = getattr(test_func, "test_description", test_func.__name__)
         test_info = getattr(test_func, "test_info", "")
@@ -531,19 +694,19 @@ def run_tests(test_descriptions, registry, context, module_name, continue_on_fai
                 result = run_registered_test(test_name, [test_func], context)
                 context["abort"] = True
                 if result:
-                    results.append(result)
+                    _publish(result)
                 continue
 
-            results.append((test_name, "SKIPPED", "gray", "Skipped", "", 0.00, test_info))
+            _publish((test_name, "SKIPPED", "gray", "Skipped", "", 0.00, test_info))
             continue
 
         if getattr(test_func, "pause_on", False):
-            results.append(_run_pause_step(test_name, context, test_info))
+            _publish(_run_pause_step(test_name, context, test_info))
             continue
 
         result = run_registered_test(test_name, [test_func], context)
         if result:
-            results.append(result)
+            _publish(result)
 
         # continue_on_failure ("keep running" mode): a testlist that's a
         # bundle of independent checks rather than a dependent chain opts

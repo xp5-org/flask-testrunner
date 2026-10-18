@@ -3,11 +3,24 @@ import re
 import importlib.util
 import os
 import inspect
+import threading
 from markupsafe import escape, Markup
 _step_counter = 0
 
 testfile_registry = {}
 registry_map = {}
+
+# reload_tests() rebuilds testfile_registry by clearing it and then
+# re-populating it one file at a time as it walks the filesystem and imports
+# each testlist (register_testfile() writes an entry per import). That's a
+# long window with the dict in a half-built state. reload_tests() can be
+# triggered concurrently from more than one thread -- a request handler
+# (apiv1.list_tests et al.) and a background run worker (runhelper.py) both
+# call it -- and anything iterating testfile_registry.items()/.values() while
+# another thread is mid-rebuild hits "dictionary changed size during
+# iteration". Every writer and every read that iterates the registry must
+# hold this lock.
+registry_lock = threading.RLock()
 
 
 helperdir = "/testsrc/pyhelpers"
@@ -15,6 +28,18 @@ TESTSRC_BASE = "/testsrc"
 
 TESTPARENT_FILE = "__testparent__.py"
 REQUIRED_PARENT_KEYS = ("name", "archtype", "platform")
+
+# Optional PARENT keys. Unlike the required three, these only steer how the
+# container page presents itself, so a stub that omits them behaves exactly
+# as it did before they existed.
+OPTIONAL_PARENT_KEYS = ("description", "batch_run_all", "batch_run_failed", "batch_run_tools", "view",
+                        "build_tracker", "ab_testing")
+
+# Layouts the container page can open in: one card per child variant (the
+# original), or one row per child variant in a report-style table. A
+# container with a dozen children is unreadable as cards.
+CONTAINER_VIEWS = ("cards", "table")
+DEFAULT_CONTAINER_VIEW = "cards"
 
 _parent_cache = {}
 
@@ -55,6 +80,16 @@ def load_parent(dirpath):
     return parent
 
 
+def parent_view(parent):
+    """Which layout a container's page opens in, from its PARENT stub.
+
+    Anything unset or unrecognised falls back to the card view, so a typo in
+    a stub degrades to the old behaviour instead of a blank page.
+    """
+    view = str((parent or {}).get("view") or "").strip().lower()
+    return view if view in CONTAINER_VIEWS else DEFAULT_CONTAINER_VIEW
+
+
 def resolve_parent(config, module_file):
     """Bind a testlist to the container declared in its own directory.
 
@@ -90,14 +125,12 @@ _URL_RE = re.compile(r'(https?://[^\s<>"]+)')
 _URL_TRAILING_PUNCT = '.,;:!?)]}\'"'
 
 
-def linkify(text):
-    """Escape text and turn any http(s) URL in it into a clickable link.
+def _linkify_line(text):
+    """Escape a single line and turn any http(s) URL in it into a link.
 
-    Used for container descriptions in __testparent__.py
+    Returns a plain str (not Markup) so callers can compose it further.
     """
-    if not text:
-        return Markup("")
-    parts = _URL_RE.split(str(text))
+    parts = _URL_RE.split(text)
     html_parts = []
     for part in parts:
         if not _URL_RE.match(part):
@@ -109,6 +142,62 @@ def linkify(text):
             f'<a href="{escape(url)}" target="_blank" rel="noopener noreferrer">{escape(url)}</a>'
             f'{escape(trailing)}'
         )
+    return "".join(html_parts)
+
+
+def linkify(text):
+    """Escape text and turn any http(s) URL in it into a clickable link.
+
+    Used for container descriptions in __testparent__.py
+    """
+    if not text:
+        return Markup("")
+    return Markup(_linkify_line(str(text)))
+
+
+def render_description(text):
+    """Render a __testparent__.py description as basic markdown.
+
+    Supports what container descriptions actually use: blank-line-separated
+    paragraphs, single newlines as line breaks within a paragraph, and
+    "- " prefixed lines as a bullet list. Everything else is escaped and
+    URLs are still linkified, same as `linkify`.
+    """
+    if not text:
+        return Markup("")
+
+    html_parts = []
+    list_open = False
+    para_lines = []
+
+    def flush_para():
+        if para_lines:
+            html_parts.append(
+                "<p>" + "<br>".join(_linkify_line(l) for l in para_lines) + "</p>"
+            )
+            para_lines.clear()
+
+    for line in str(text).split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            flush_para()
+            if not list_open:
+                html_parts.append("<ul>")
+                list_open = True
+            html_parts.append(f"<li>{_linkify_line(stripped[2:])}</li>")
+            continue
+        if list_open:
+            html_parts.append("</ul>")
+            list_open = False
+        if stripped == "":
+            flush_para()
+            continue
+        para_lines.append(stripped)
+
+    flush_para()
+    if list_open:
+        html_parts.append("</ul>")
+
     return Markup("".join(html_parts))
 
 
@@ -130,12 +219,22 @@ def project_relpath(meta):
 
 
 def clear_registries():
-    for r in list(registry_map.values()):
-        r[:] = []
-    testfile_registry.clear()
-    # Stubs are re-read on the next reload, so edits to a __testparent__.py
-    # take effect without restarting the app.
-    _parent_cache.clear()
+    with registry_lock:
+        for r in list(registry_map.values()):
+            r[:] = []
+        testfile_registry.clear()
+        # Stubs are re-read on the next reload, so edits to a __testparent__.py
+        # take effect without restarting the app. Same for a container's
+        # __testplan__.py: a template edit must reach every testlist that
+        # imports it on the next reload, not on the next restart.
+        _parent_cache.clear()
+        try:
+            import stepplan
+            stepplan.clear_plan_cache()
+        except ImportError:
+            # apphelpers is also imported by testlists running outside the
+            # app, where stepplan is not on the path and nothing is cached.
+            pass
 
 
 def _add_to_registry(registry, description, func):
@@ -146,20 +245,34 @@ def _add_to_registry(registry, description, func):
 
 
 def register_testfile(id, types, description=None, tags=None, system=None, platform=None,
-                       batch_exclude=False):
+                       batch_exclude=False, is_tool=False, build_tool=False):
     def decorator(module):
         modname = module.__name__
         types_dict = {t: modname for t in types} if isinstance(types, list) else types
 
-        testfile_registry[modname] = {
-            "id": id,
-            "types": types_dict,
-            "description": description,
-            "tags": tags or [],
-            "system": system,
-            "platform": platform,
-            "batch_exclude": bool(batch_exclude),
-        }
+        with registry_lock:
+            testfile_registry[modname] = {
+                "id": id,
+                "types": types_dict,
+                "description": description,
+                "tags": tags or [],
+                "system": system,
+                "platform": platform,
+                "batch_exclude": bool(batch_exclude),
+                # Infrastructure testlists (build/deploy) that prepare a
+                # shared tree rather than exercise it. Kept out of "Run
+                # Tests" so a routine test pass never re-triggers a rebuild
+                # or a deploy; they only run via "Run Tools" (or by hand).
+                "is_tool": bool(is_tool),
+                # Sub-kind of is_tool: a build_tool compiles from a
+                # configurable input (e.g. a git ref) and so can be paired
+                # A/B like a variant is -- "Build A"/"Build B" run it with
+                # slot A/B's input overrides and register the result straight
+                # into that slot. A plain is_tool (host_tool: deploy steps,
+                # tools with no varying input) stays mono: one Run button,
+                # no slot pairing. See buildhelper.py.
+                "build_tool": bool(build_tool),
+            }
         return module
     return decorator
 
@@ -176,38 +289,39 @@ def registry_warnings():
     """
     warnings = []
     by_container = {}
-    for modname, info in testfile_registry.items():
-        path = project_relpath(info)
-        if not path:
-            continue
-        by_container.setdefault((info["id"], info.get("system")), set()).add(path)
-    for (name, system), paths in sorted(by_container.items(), key=lambda kv: str(kv[0])):
-        if len(paths) > 1:
-            warnings.append({
-                "kind": "duplicate_parent",
-                "testname": name,
-                "system": system,
-                "paths": sorted(paths),
-                "message": f"{name} declared by {len(paths)} directories: "
-                           f"{', '.join(sorted(paths))}",
-            })
-
-    seen_variant = {}
-    for modname, info in testfile_registry.items():
-        for testtype in (info.get("types") or {}):
-            key = (info["id"], info.get("system"), testtype)
-            if key in seen_variant:
-                other = seen_variant[key]
+    with registry_lock:
+        for modname, info in testfile_registry.items():
+            path = project_relpath(info)
+            if not path:
+                continue
+            by_container.setdefault((info["id"], info.get("system")), set()).add(path)
+        for (name, system), paths in sorted(by_container.items(), key=lambda kv: str(kv[0])):
+            if len(paths) > 1:
                 warnings.append({
-                    "kind": "duplicate_testtype",
-                    "module": modname,
-                    "conflicts_with": other,
-                    "testname": info["id"],
-                    "testtype": testtype,
-                    "message": f"{modname} ({project_relpath(info)})",
+                    "kind": "duplicate_parent",
+                    "testname": name,
+                    "system": system,
+                    "paths": sorted(paths),
+                    "message": f"{name} declared by {len(paths)} directories: "
+                               f"{', '.join(sorted(paths))}",
                 })
-            else:
-                seen_variant[key] = modname
+
+        seen_variant = {}
+        for modname, info in testfile_registry.items():
+            for testtype in (info.get("types") or {}):
+                key = (info["id"], info.get("system"), testtype)
+                if key in seen_variant:
+                    other = seen_variant[key]
+                    warnings.append({
+                        "kind": "duplicate_testtype",
+                        "module": modname,
+                        "conflicts_with": other,
+                        "testname": info["id"],
+                        "testtype": testtype,
+                        "message": f"{modname} ({project_relpath(info)})",
+                    })
+                else:
+                    seen_variant[key] = modname
 
     return warnings
 
@@ -265,6 +379,11 @@ def init_test_env(config, module_name):
     paths = build_paths(config["structure"], config["projbasedir"], config)
     module = sys.modules[module_name]
     parent = resolve_parent(config, module.__file__)
+    # archtype lives in __testparent__.py so every child agrees on it by
+    # construction (see TESTPARENT_FILE docstring); dispatch_functions.py's
+    # steps read it back out via config.get("archtype") at run time, so it
+    # has to land in CONFIG here rather than only feeding registration below.
+    config["archtype"] = parent["archtype"]
 
     register_testfile(
         id=parent["name"],
@@ -281,6 +400,8 @@ def init_test_env(config, module_name):
         # "run all" batching -- they still show up individually and count
         # for "run failed".
         batch_exclude=config.get("batch_exclude", False),
+        is_tool=config.get("is_tool", False),
+        build_tool=config.get("build_tool", False),
     )(module)
     reset_step_counter()
     return paths

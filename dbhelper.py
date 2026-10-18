@@ -136,10 +136,12 @@ class ReportDB:
             status_raw = r["status"].upper() if r["status"] else "SKIP"
             duration_val = f"{r['duration']:.2f}" if r["duration"] is not None else "0.00"
 
-            if "PASS" in status_raw:
-                status = "PASS"
-            elif "FAIL" in status_raw:
+            if "FAIL" in status_raw:
                 status = "FAIL"
+            elif "WARN" in status_raw:
+                status = "WARN"
+            elif "PASS" in status_raw:
+                status = "PASS"
             else:
                 status = "SKIP"
 
@@ -221,11 +223,13 @@ class ReportDB:
                 r.path,
                 SUM(tr.duration) as total_duration,
                 CASE
-                    WHEN MIN(tr.status) IN ('FAIL', 'ERROR') THEN 'FAIL'
+                    WHEN SUM(CASE WHEN tr.status IN ('FAIL', 'ERROR') THEN 1 ELSE 0 END) > 0 THEN 'FAIL'
+                    WHEN SUM(CASE WHEN tr.status = 'WARN' THEN 1 ELSE 0 END) > 0 THEN 'WARN'
                     ELSE 'PASS'
                 END as overall_status,
                 MIN(tr.start_time) as report_start,
-                MIN(tr.test_id) as test_id
+                MIN(tr.test_id) as test_id,
+                MIN(tr.testparentname) as testparentname
             FROM report r
             LEFT JOIN test_result tr ON r.id = tr.report_id
         """
@@ -241,7 +245,7 @@ class ReportDB:
 
         if per_parent_limit is not None:
             query = """
-                SELECT path, total_duration, overall_status, report_start, test_id
+                SELECT path, total_duration, overall_status, report_start, test_id, testparentname
                 FROM (
                     -- test_id  the parent name is a display
                     -- label that gets renamed ("openwatcom1" -> "OpenWatcom
@@ -257,7 +261,7 @@ class ReportDB:
             params.append(per_parent_limit)
         else:
             query = """
-                SELECT path, total_duration, overall_status, report_start, test_id
+                SELECT path, total_duration, overall_status, report_start, test_id, testparentname
                 FROM (%s)
             """ % query
 
@@ -270,7 +274,8 @@ class ReportDB:
         rows = cur.fetchall()
         conn.close()
 
-        return [(r[0], f"{r[1]:.2f}" if r[1] is not None else "0.00", r[2].upper() if r[2] else "", r[3], r[4]) for r in rows]
+        return [(r[0], f"{r[1]:.2f}" if r[1] is not None else "0.00", r[2].upper() if r[2] else "", r[3], r[4], r[5])
+                for r in rows]
 
 
     def init_report_db(self):
@@ -400,6 +405,8 @@ class ReportDB:
         # Derive and store build artifacts from CONFIG if provided
         if config:
             self.save_build_artifacts(report_id, test_id, config)
+
+        return report_id
 
 
     # ── Build artifact helpers ────────────────────────────────────────────────
@@ -625,7 +632,10 @@ class ReportDB:
             parent_name = r["testparentname"]
             status_raw = r["status"].upper() if r["status"] else "None"
 
-            dict_key = (test_id, types)
+            # Parent is part of the key: unfiltered, a testlist whose container
+            # was renamed has rows under both names, and keying on test_id alone
+            # folds the new container's rows into the old one's entry.
+            dict_key = (parent_name, test_id, types)
 
             if dict_key not in results:
                 results[dict_key] = {
@@ -637,7 +647,16 @@ class ReportDB:
 
             if status_raw == "FAIL" or status_raw == "ERROR":
                 results[dict_key]["status"] = "FAIL"
-            elif status_raw == "PASS" and results[dict_key]["status"] != "FAIL":
+            elif status_raw == "WARN" and results[dict_key]["status"] not in ("FAIL",):
+                results[dict_key]["status"] = "WARN"
+            elif "SKIP" in status_raw and results[dict_key]["status"] not in ("FAIL", "WARN"):
+                # A step skipped after a pause_on abort (or any other abort)
+                # means whatever it would have asserted never ran. An earlier
+                # step's PASS must not be left standing as the final status --
+                # that would report a clean pass for a run that never reached
+                # its real check.
+                results[dict_key]["status"] = "SKIP"
+            elif status_raw == "PASS" and results[dict_key]["status"] not in ("FAIL", "WARN", "SKIP"):
                 results[dict_key]["status"] = "PASS"
 
         return list(results.values())
@@ -647,11 +666,24 @@ class ReportDB:
 
     @staticmethod
     def _derive_status(results):
-        """build list of per-step status strings up to one overall PASS/FAIL."""
-        for r in results:
-            s = (r.get("status") or "").upper()
-            if s in ("FAIL", "ERROR"):
-                return "FAIL"
+        """roll up per-step status strings to one overall PASS/WARN/FAIL/SKIP.
+
+        FAIL beats WARN beats SKIP beats PASS: a single failing step fails the
+        whole report even if other steps warned, and a single WARN keeps the
+        report from reading as a clean PASS even though nothing actually
+        failed. SKIP beats PASS too -- a run that stopped early (e.g. a
+        pause_on step skipping the rest, including whatever step would have
+        actually asserted success) must not report PASS just because every
+        step that DID run happened to pass; that reads as a clean result for
+        a check that never ran.
+        """
+        statuses = [(r.get("status") or "").upper() for r in results]
+        if any(s in ("FAIL", "ERROR") for s in statuses):
+            return "FAIL"
+        if any(s == "WARN" for s in statuses):
+            return "WARN"
+        if any("SKIP" in s for s in statuses):
+            return "SKIP"
         return "PASS" if results else "UNKNOWN"
 
     def list_reports(self, limit=50):
@@ -669,8 +701,12 @@ class ReportDB:
             SELECT r.id AS report_id,
                    r.path AS path,
                    SUM(tr.duration) AS total_duration,
-                   CASE WHEN MIN(tr.status) IN ('FAIL', 'ERROR') THEN 'FAIL'
-                        ELSE 'PASS' END AS status,
+                   CASE
+                       WHEN SUM(CASE WHEN tr.status IN ('FAIL', 'ERROR') THEN 1 ELSE 0 END) > 0 THEN 'FAIL'
+                       WHEN SUM(CASE WHEN tr.status = 'WARN' THEN 1 ELSE 0 END) > 0 THEN 'WARN'
+                       WHEN SUM(CASE WHEN tr.status LIKE '%SKIP%' THEN 1 ELSE 0 END) > 0 THEN 'SKIP'
+                       ELSE 'PASS'
+                   END AS status,
                    MIN(tr.start_time) AS started_at
             FROM report r
             LEFT JOIN test_result tr ON tr.report_id = r.id
@@ -755,6 +791,85 @@ class ReportDB:
         row = cur.fetchone()
         conn.close()
         return row[0] if row else None
+
+
+    # ── Archiving ──────────────────────────────────────────────────────────
+
+    def get_report_ids_for_testparentname(self, testparentname):
+        """report ids for every test_id that has ever shared this container's
+        testparentname, newest first. Deliberately keyed on testparentname (the
+        same field /test/<container> itself filters on -- see get_all_reports_summary's
+        `test_parent_name` and get_latest_namedteststatus) rather than resolving
+        through the live testfile_registry: a testlist that's since been renamed
+        or moved on disk still shows up here and still needs archiving, even
+        though it no longer resolves via apphelpers.resolve_container.
+
+        Both archive modes (keep newest N, archive whole container) use this:
+        a container's reports are one pool across all its variant testlists,
+        so "newest N" means newest N of the container, not newest N per variant.
+        """
+        conn = self._connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT DISTINCT r.id FROM report r
+            JOIN test_result tr ON tr.report_id = r.id
+            WHERE tr.testparentname = ?
+            ORDER BY r.id DESC
+            """,
+            (testparentname,),
+        )
+        ids = [row[0] for row in cur.fetchall()]
+        conn.close()
+        return ids
+
+    def get_report_bundle(self, report_id):
+        """Everything archiving needs to copy for one report: the report row
+        plus its test_result and build_artifact rows, all as plain dicts so
+        they're easy to compare against what actually landed in archive.db.
+        Returns None if the report doesn't exist.
+        """
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute("SELECT * FROM report WHERE id = ?", (report_id,))
+        report_row = cur.fetchone()
+        if report_row is None:
+            conn.close()
+            return None
+
+        cur.execute(
+            "SELECT * FROM test_result WHERE report_id = ? ORDER BY test_index",
+            (report_id,),
+        )
+        test_results = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("SELECT * FROM build_artifact WHERE report_id = ?", (report_id,))
+        build_artifacts = [dict(r) for r in cur.fetchall()]
+
+        conn.close()
+        return {
+            "report": dict(report_row),
+            "test_results": test_results,
+            "build_artifacts": build_artifacts,
+        }
+
+    def delete_report(self, report_id):
+        """Remove a report and its child rows. Only ever called after the
+        archive.db copy has been written back and verified."""
+        conn = self._connect()
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM build_artifact WHERE report_id = ?", (report_id,))
+            cur.execute("DELETE FROM test_result WHERE report_id = ?", (report_id,))
+            cur.execute("DELETE FROM report WHERE id = ?", (report_id,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 db = ReportDB()

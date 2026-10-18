@@ -9,6 +9,7 @@ import threading
 import appstate
 import apphelpers
 import test_runner
+import runsession
 import apphelpers as testid
 from appstate import progress_state, run_registry, batch_registry, process_registry
 from dbhelper import db
@@ -26,6 +27,17 @@ def is_busy() -> bool:
     return bool(progress_state.testname) or bool(batch_registry.current())
 
 
+def ensure_registry() -> None:
+    """Repopulate testfile_registry if the previous run emptied it.
+
+    run_testfile() clears the registries on every run, so anything that reads
+    them between runs -- the slug resolution below, and apiv1's lookups -- has
+    to reload first.
+    """
+    if not apphelpers.testfile_registry:
+        test_runner.reload_tests()
+
+
 def _new_run_id(test_id: str) -> str:
     # Timestamp keeps run ids sortable and human-readable; the short module
     # tail disambiguates runs started within the same second (rare given the
@@ -40,7 +52,7 @@ def _new_batch_id(container: str) -> str:
     return f"{ts}_{container}_batch"
 
 
-def _execute(test_id: str, run_id: str) -> str:
+def _execute(test_id: str, run_id: str, options: dict = None) -> str:
     """Run one already-registered run_id and record its outcome.
 
     Shared by launch_run's worker and the batch worker in launch_batch so a
@@ -48,22 +60,41 @@ def _execute(test_id: str, run_id: str) -> str:
     a batch. Assumes the caller has already called progress_state for this run_id
     """
     try:
-        results = test_runner.run_testfile(test_id, progress_state)
+        # run_testfile() calls apphelpers.clear_registries() on every run, so
+        # by the time a second run starts the registry it looks test_id up in
+        # is empty. Reload here, at the point both callers share, so the single
+        # and batch paths cannot drift apart on this again.
+        test_runner.reload_tests()
+
+        results = test_runner.run_testfile(test_id, progress_state, options)
+
+        # run_testfile() returns [] for every "nothing ran" case -- no registry
+        # entry, no file on disk, no steps in the testlist -- which is
+        # indistinguishable from a clean pass. No steps means no report, and a
+        # run with no report is never a success.
+        if not results:
+            run_registry.finish(run_id, "error", error=(
+                f"{test_id} ran no steps and produced no report "
+                f"(missing registry entry, unreadable test file, "
+                f"or a testlist with no runnable steps)"))
+            return "error"
 
         # The run just inserted (at most) one report row for this test.
         # Since runs are serialised, the newest report is ours.
         report_id = report_path = None
-        if results:
-            recent = db.list_reports(limit=1)
-            if recent:
-                report_id   = recent[0]["report_id"]
-                report_path = recent[0]["path"]
+        recent = db.list_reports(limit=1)
+        if recent:
+            report_id   = recent[0]["report_id"]
+            report_path = recent[0]["path"]
 
-        status = "done"
-        if results:
-            status = "error" if any(
-                (r[1] or "").upper() in ("FAIL", "ERROR") for r in results
-            ) else "done"
+        # A FAIL that a later retry in the same interactive run superseded
+        # is still in the report, but does not fail the run.
+        session = runsession.sessions.get(run_id)
+        if session is not None:
+            failed = session.effective_failed()
+        else:
+            failed = any((r[1] or "").upper() in ("FAIL", "ERROR") for r in results)
+        status = "error" if failed else "done"
 
         run_registry.finish(run_id, status,
                              report_id=report_id, report_path=report_path)
@@ -77,7 +108,7 @@ def _execute(test_id: str, run_id: str) -> str:
     return status
 
 
-def launch_run(test_id: str) -> str:
+def launch_run(test_id: str, options: dict = None) -> str:
     """Start `test_id` in a background thread and return a run_id handle.
 
     Raises RunBusyError if another run is already active.
@@ -94,6 +125,7 @@ def launch_run(test_id: str) -> str:
     # here, at the shared choke point, so every caller behaves the same:
     # apiv1 already resolves before calling in, and resolving a dot-path is a
     # no-op, so this only ever helps.
+    ensure_registry()
     test_id = testid.resolve(test_id, apphelpers.testfile_registry.keys()) or test_id
 
     run_id = _new_run_id(test_id)
@@ -105,7 +137,7 @@ def launch_run(test_id: str) -> str:
     progress_state.run_id   = run_id
 
     def _worker():
-        _execute(test_id, run_id)
+        _execute(test_id, run_id, options)
 
     threading.Thread(target=_worker, daemon=True).start()
     return run_id
@@ -114,21 +146,29 @@ def launch_run(test_id: str) -> str:
 def launch_batch(container: str, mode: str, items: list) -> str:
     """Run several test_ids sequentially (a container's Run All / Run Failed)
     and return a batch_id handle.
+
+    An item is a test id, or a (test id, extra run options, label) tuple --
+    the A/B batch runs the same test twice with a different build_override
+    each time, and the label ("... [A]") is what the batch reports it as.
     """
     if is_busy():
         raise RunBusyError(f"A run is already in progress: {progress_state.testname}")
     if not items:
         raise ValueError("No tests to run for this batch")
 
-    resolved = [testid.resolve(t, apphelpers.testfile_registry.keys()) or t for t in items]
+    ensure_registry()
+    resolved = []
+    for item in items:
+        t, extra, label = item if isinstance(item, tuple) else (item, {}, None)
+        t = testid.resolve(t, apphelpers.testfile_registry.keys()) or t
+        resolved.append((t, extra or {}, label or t))
     batch_id = _new_batch_id(container)
-    batch_registry.create(batch_id, container, mode, resolved)
+    batch_registry.create(batch_id, container, mode, [label for _, _, label in resolved])
 
     def _worker():
-        for i, test_id in enumerate(resolved):
+        for i, (test_id, extra, label) in enumerate(resolved):
             if batch_registry.stop_requested(batch_id):
                 break
-            test_runner.reload_tests()
 
             run_id = _new_run_id(test_id)
             run_registry.create(run_id, test_id)
@@ -138,8 +178,9 @@ def launch_batch(container: str, mode: str, items: list) -> str:
             progress_state.testname = test_id
             progress_state.run_id   = run_id
 
-            status = _execute(test_id, run_id)
-            batch_registry.record_result(batch_id, test_id, run_id, status)
+            # Batch items are unattended: never suspend (see RunSession).
+            status = _execute(test_id, run_id, {**extra, "interactive": False})
+            batch_registry.record_result(batch_id, label, run_id, status)
 
         batch_registry.finish(
             batch_id, "stopped" if batch_registry.stop_requested(batch_id) else "done")
@@ -162,6 +203,16 @@ def request_stop() -> bool:
         if ctx:
             ctx["abort"] = True
             stopped_something = True
+
+    # A suspended run is parked in a wait, not in a step -- the abort flag
+    # alone never reaches it.
+    session = runsession.sessions.current()
+    if session is not None:
+        try:
+            session.control("stop")
+            stopped_something = True
+        except runsession.SessionError:
+            pass
 
     batch = batch_registry.current()
     if batch:

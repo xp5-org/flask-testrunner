@@ -1,0 +1,158 @@
+<div id="stepmatrix-float">
+  <span id="stepmatrix-dot"></span>
+  <span id="stepmatrix-label">Idle</span>
+  <span id="stepmatrix-ctl" style="display:none">
+    <button type="button" data-cmd="resume" class="sm-go" title="continue automatically">Resume</button>
+    <button type="button" data-cmd="step" title="run the next step, then suspend again">Step</button>
+    <button type="button" data-cmd="retry" title="re-run the step that just ran">Retry</button>
+    <button type="button" data-cmd="run_to" title="run until the selected pending step (click a row in the step matrix), or pick a step number">Run to…</button>
+    <button type="button" data-cmd="pause" title="suspend before the next step">Pause</button>
+    <button type="button" data-cmd="stop" class="sm-stop" title="skip the rest, run teardown steps">Stop</button>
+    <button type="button" data-cmd="abandon" title="skip everything left, including teardown, and leave instances running">Abandon</button>
+    <span id="stepmatrix-timer"></span>
+  </span>
+  <button type="button" id="stepmatrix-expand" title="Open step matrix in a new tab">Matrix &#10530;</button>
+</div>
+<style>
+#stepmatrix-float{
+  position:fixed; bottom:14px; right:14px; z-index:9999;
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;
+  max-width:calc(100vw - 28px);
+  background:#fff; border:1px solid #999; border-radius:4px;
+  padding:5px 10px; font:12px/1.3 ui-monospace,"JetBrains Mono",Consolas,monospace;
+  box-shadow:0 1px 4px rgba(0,0,0,.25); color:#111;
+}
+#stepmatrix-float.suspended{ border-color:#7b3fa0; background:#f8f2fc; }
+#stepmatrix-dot{width:8px;height:8px;border-radius:50%;background:#888;flex:none;}
+#stepmatrix-label{white-space:nowrap;max-width:46vw;overflow:hidden;text-overflow:ellipsis;}
+#stepmatrix-float.suspended #stepmatrix-label{color:#7b3fa0;font-weight:700;}
+#stepmatrix-ctl{display:inline-flex;gap:4px;align-items:center;}
+#stepmatrix-float button{
+  cursor:pointer; font:inherit; border:1px solid #999; background:#f2f2f2; color:#111;
+  border-radius:3px; padding:2px 8px;
+}
+#stepmatrix-float button:hover{ background:#e6e6e6; }
+#stepmatrix-float button.sm-go{ background:#28a745; border-color:#1e7e34; color:#fff; }
+#stepmatrix-float button.sm-stop{ background:#dc3545; border-color:#b02a37; color:#fff; }
+#stepmatrix-float button:disabled{opacity:.4; cursor:default;}
+#stepmatrix-timer{color:#666; margin-left:4px;}
+</style>
+<script>
+(function(){
+  // Additive status widget: reuses the /api/v1/runs/current poll every other
+  // page already runs. testname is the module dot-path, which is a valid
+  // /api/v1/tests/<id> key -- more reliable here than testid, a human label.
+  //
+  // While a run is live its session brief (runs/current -> session) drives
+  // the Resume/Step/Retry/Pause/Stop buttons: each is enabled only when the
+  // session lists it in allowed_commands, so the widget never offers a
+  // command the engine would refuse.
+  var lastTestId = window.__DEFAULT_TEST_ID__ || null;
+  var float = document.getElementById("stepmatrix-float");
+  var dot   = document.getElementById("stepmatrix-dot");
+  var label = document.getElementById("stepmatrix-label");
+  var ctl   = document.getElementById("stepmatrix-ctl");
+  var timer = document.getElementById("stepmatrix-timer");
+  var btn   = document.getElementById("stepmatrix-expand");
+  var REASON = {breakpoint:"breakpoint", step:"single-step", fault:"FAULT", run_to:"run-to",
+                user:"paused", draft_invalid:"draft invalid"};
+  var session = null, pollTimer = null;
+  btn.disabled = !lastTestId;
+  // On the matrix page itself the expand button would open this same page.
+  if (window.__MATRIX_PAGE__) btn.style.display = "none";
+
+  function render(data){
+    session = data.session || null;
+    var busy = !!data.step && data.step !== "Idle" && data.step !== "Done";
+    if (busy && data.testname){ lastTestId = data.testname; }
+    var suspended = !!(session && session.state === "suspended");
+    float.classList.toggle("suspended", suspended);
+    dot.style.background = suspended ? "#7b3fa0" : busy ? "#c77e1d" : "#2e7d46";
+    if (session){
+      var where = session.next_ordinal + "/" + session.total
+                + (session.next_title ? " " + session.next_title : "");
+      label.textContent = suspended
+        ? "SUSPENDED (" + (REASON[session.reason] || session.reason) + ") before " + where
+        : session.running_step
+          ? "RUNNING step " + session.running_step.ordinal + "/" + session.total + " "
+            + session.running_step.title + " · " + Math.floor(session.running_step.elapsed) + "s"
+            + (session.mode === "step" ? " (single-step)" : "")
+          : "RUNNING " + (session.mode === "step" ? "single-step " : "") + (data.step || "")
+            + " — " + (data.testid || data.testname || "");
+      label.title = session.module;
+      var allowed = session.allowed_commands || [];
+      ctl.querySelectorAll("button[data-cmd]").forEach(function(b){
+        b.disabled = allowed.indexOf(b.dataset.cmd) < 0;
+      });
+      var left = session.suspend_seconds_left;
+      timer.textContent = (suspended && left != null)
+        ? Math.floor(left / 60) + ":" + String(Math.floor(left % 60)).padStart(2, "0") : "";
+      ctl.style.display = "";
+    } else {
+      label.textContent = busy ? (data.step + " — " + (data.testid || data.testname)) : "Idle";
+      label.title = "";
+      ctl.style.display = "none";
+    }
+    btn.disabled = !lastTestId;
+  }
+
+  async function poll(){
+    clearTimeout(pollTimer);
+    try{
+      var res  = await fetch("/api/v1/runs/current");
+      var body = await res.json();
+      render(body.data || {});
+    } catch (e){
+      dot.style.background = "#888";
+      label.textContent = "?";
+    }
+    pollTimer = setTimeout(poll, session ? 1500 : 3000);
+  }
+
+  ctl.addEventListener("click", async function(e){
+    var b = e.target.closest("button[data-cmd]");
+    if (!b || !session) return;
+    var cmd = b.dataset.cmd;
+    var payload = {command: cmd};
+    if (cmd === "stop" && !confirm("Stop: skip the remaining steps and run teardown steps?")) return;
+    if (cmd === "abandon" && !confirm("Abandon: skip everything left, including teardown, and leave the instances running?")) return;
+    if (cmd === "run_to"){
+      // The matrix page offers the row you clicked; anywhere else (or with no
+      // row picked) ask for a step number, numbered like the report.
+      var uid = window.__stepmatrixSelectedUid ? window.__stepmatrixSelectedUid() : null;
+      if (!uid){
+        try{
+          var sres = await fetch("/api/v1/runs/" + encodeURIComponent(session.run_id) + "/session");
+          var snap = (await sres.json()).data;
+          var first = snap.executed.length + 1, last = snap.executed.length + snap.pending.length;
+          var n = prompt("Run until just before which step? (" + (first + 1) + "–" + last + ")", String(Math.min(first + 1, last)));
+          if (!n) return;
+          var p = snap.pending[Number(n) - first];
+          if (!p) return alert("step " + n + " is not a pending step");
+          uid = p.uid;
+        } catch (err){ return alert(err); }
+      }
+      payload.uid = uid;
+    }
+    ctl.querySelectorAll("button").forEach(function(x){ x.disabled = true; });
+    try{
+      var res = await fetch("/api/v1/runs/" + encodeURIComponent(session.run_id) + "/control", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      var body = await res.json();
+      if (!res.ok) alert((body.error && body.error.message) || res.status);
+    } catch (err){ alert(err); }
+    // let other panels on the page (the matrix table) catch up right away
+    window.dispatchEvent(new Event("stepmatrix:command"));
+    setTimeout(poll, 250);
+  });
+
+  btn.addEventListener("click", function(){
+    if (!lastTestId) return;
+    window.open("/matrix/" + encodeURIComponent(lastTestId), "_blank");
+  });
+
+  poll();
+})();
+</script>

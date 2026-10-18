@@ -3,23 +3,496 @@
 {% block content %}
 <!-- {% include "navbar.html" %} -->
 
+<style>
+/* View switcher */
+#view-switch {
+    display: flex; align-items: center; gap: 8px;
+    margin: 12px 0; font-size: 0.85rem;
+}
+.view-btn {
+    background: #e9ecef; color: #333; border: 1px solid #ccc;
+    padding: 4px 14px; border-radius: 3px;
+}
+.view-btn:hover { background: #dee2e6; }
+.view-btn.active { background: #007bff; color: #fff; border-color: #0056b3; }
+.view-btn.active:hover { background: #0056b3; }
+.view-switch-label { font-weight: 600; color: #666; text-transform: uppercase;
+                     font-size: 0.7rem; letter-spacing: 0.05em; }
+.view-switch-note { color: #888; }
+.view-switch-edit { margin-left: auto; color: #007bff; }
+
+.container-description p { margin: 0 0 0.6em 0; }
+.container-description p:last-child { margin-bottom: 0; }
+.container-description ul { margin: 0 0 0.6em 0; padding-left: 1.4em; }
+.container-description ul:last-child { margin-bottom: 0; }
+
+/* Hidden until the switcher picks one, so the page never flashes both
+   layouts before the script runs. Shown by class rather than by clearing an
+   inline style: the card grid's own display is flex, and clearing the inline
+   value would hand it back to this rule and hide it again. */
+.container-view { display: none; }
+.container-view.view-active { display: block; }
+.test-grid.container-view.view-active { display: flex; }
+
+/* Condensed table. style.css pins column widths by nth-child for the
+   four-column report tables; these have more columns than that, so they
+   set their own -- everything else (borders, uppercase headers, the
+   green/red/warn/gray status cells) is inherited from the report style. */
+.container-table { table-layout: fixed; }
+.container-table td { white-space: nowrap; font-size: 0.85rem; padding: 4px 10px; }
+.container-table th { padding: 4px 10px; }
+.container-table tbody tr:nth-child(even) { background: #f7f7f7; }
+.container-table th:nth-child(n), .container-table td:nth-child(n) { width: auto; }
+/* No `width` here on purpose: column widths for this table are set once, in
+   the <colgroup> next to the table markup below -- table-layout:fixed sizes
+   columns from the table's first row (the <thead>), so a width declared on
+   a body <td> never affects layout no matter how it's written. Change column
+   widths in the <colgroup>, not here. */
+.container-table td.cell-variant { white-space: normal; word-break: break-word; }
+.container-table td.cell-id      { white-space: normal; word-break: break-word; }
+.container-table td.cell-path    { overflow: hidden; text-overflow: ellipsis; }
+.container-table td.cell-flags   { white-space: normal; }
+.container-table td.cell-system  { overflow: hidden; text-overflow: ellipsis; }
+.container-table td.cell-status  { text-align: center; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.container-table th              { white-space: nowrap; }
+.container-table td.cell-actions { white-space: nowrap; }
+.container-table .cell-actions button { padding: 2px 8px; }
+.container-table .edit-btn { background: #6c757d; }
+.container-table .edit-btn:hover { background: #5a6268; }
+.flag-label { color: #c77700; font-size: 0.75rem; display: block; }
+.reports-table .cell-variant { width: 28%; }
+
+/* Tools section: build/deploy infra tests, fenced off from the regular test
+   grid/table so "Run Tests" visibly does not touch them. Cards get a dashed
+   box (the grid can wrap one); the table view can't wrap a table in a box
+   the same way, so it gets a labeled break and a lighter separator instead. */
+.tools-section { margin-top: 22px; }
+.tools-section-label {
+    font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #888; margin-bottom: 8px;
+}
+.tools-grid.test-grid {
+    border: 6px dashed #aaa; border-radius: 8px; padding: 14px;
+    background: #fafafa;
+}
+.tools-section-table {
+    border-top: 6px dashed #aaa; padding-top: 10px;
+}
+
+/* Test plan summary */
+#test-plan { margin: 4px 0 18px 0; }
+.test-plan-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
+                  font-size: 0.85rem; }
+.test-plan-note { color: #888; font-size: 0.8rem; }
+.plan-table td { white-space: normal; vertical-align: top; }
+/* No `width` here on purpose -- see the <colgroup> next to the plan table's
+   markup below; table-layout:fixed sizes columns from the header row only,
+   so a width on these body-cell rules would never take effect. */
+.plan-table .plan-num    { color: #888; text-align: right; }
+.plan-table .plan-label  { font-weight: 600; }
+.plan-table .plan-kind   { text-transform: uppercase; font-size: 0.7rem;
+                           letter-spacing: 0.04em; font-weight: 700; }
+.plan-table .plan-kind.matrix   { color: #8a63b5; }
+.plan-table .plan-kind.template { color: #4a7fb5; }
+.plan-table .plan-kind.error    { color: #b00; }
+.plan-table .plan-expands{ text-align: right; }
+.plan-id { font-weight: 400; color: #999; font-size: 0.8em; }
+.plan-axis { color: #555; font-size: 0.9em; }
+.plan-axis-name { color: #999; display: inline-block; min-width: 42px; }
+.plan-user { display: inline-block; background: #e7f1fb; border: 1px solid #c3dcf5;
+             border-radius: 3px; padding: 1px 6px; margin: 1px 2px 1px 0;
+             font-size: 0.85em; color: #33506e; }
+.plan-unused { color: #b9670a; font-size: 0.85em; }
+
+/* Build tracker + A & B */
+#build-tracker { margin: 4px 0 14px 0; }
+.build-table td { font-size: 0.8rem; padding: 3px 8px; overflow: hidden; text-overflow: ellipsis; }
+.build-table code { font-size: 0.95em; }
+.build-table .bt-label { width: 100%; box-sizing: border-box; font-size: 0.8rem;
+                         border: 1px solid transparent; background: transparent; padding: 1px 4px; }
+.build-table .bt-label:hover, .build-table .bt-label:focus { border-color: #ccc; background: #fff; }
+.build-table .bt-hide { background: none; color: #999; border: none; padding: 0 4px;
+                        cursor: pointer; font-size: 1rem; }
+.build-table .bt-hide:hover { color: #b00; }
+.build-table tr.bt-missing td { color: #b00; }
+.bt-dirty { color: #b9670a; font-size: 0.75rem; font-weight: 600; }
+.bt-msg { font-size: 0.8rem; color: #666; white-space: pre-wrap; }
+.bt-msg.error { color: #b00; }
+#bt-add { display: flex; gap: 6px; margin: 6px 0; align-items: center; }
+#bt-add input { font-size: 0.8rem; padding: 3px 6px; min-width: 0; }
+#bt-add button { padding: 3px 12px; }
+
+.slot-pill { display: inline-block; min-width: 1.4em; text-align: center; border-radius: 3px;
+             color: #fff; font-weight: 700; font-size: 0.75rem; padding: 1px 5px; }
+.slot-a { background: #1f6feb; }
+.slot-b { background: #d9822b; }
+#ab-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+               margin: 4px 0 12px 0; padding: 8px 10px; background: #f4f6f9;
+               border: 1px solid #dde3ea; border-radius: 4px; }
+.ab-slot { display: flex; align-items: center; gap: 4px; }
+.ab-slot select { max-width: 360px; font-size: 0.8rem; }
+.ab-slot button { font-size: 0.75rem; padding: 2px 8px; }
+.ab-resolved { font-size: 0.75rem; color: #555; }
+.ab-resolved.none { color: #b00; }
+.ab-pin-badge { font-size: 0.7rem; font-weight: 700; color: #6f42c1; }
+.bt-plat { font-size: 0.75rem; font-weight: 600; padding: 0 4px; border-radius: 3px;
+           background: #eef0f3; color: #444; }
+.bt-plat.other { color: #999; background: none; font-weight: 400; }
+.bt-slot select { font-size: 0.75rem; padding: 0; }
+.build-table tr.bt-active td { background: #f3f8ff; }
+#ab-order { font-size: 0.8rem; }
+#batch-run-ab-btn { background: #6f42c1; color: #fff; border: none; border-radius: 4px;
+                    padding: 6px 14px; cursor: pointer; }
+#batch-run-build-ab-btn { background: #1f8b5e; color: #fff; border: none; border-radius: 4px;
+                    padding: 6px 14px; cursor: pointer; }
+#build-input-selector { margin: 4px 0 14px 0; }
+#build-input-slots { display: flex; gap: 10px; flex-wrap: wrap; }
+.bi-slot { flex: 1; min-width: 260px; background: #f4f6f9; border: 1px solid #dde3ea;
+           border-radius: 4px; padding: 8px 10px; }
+.bi-slot-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.bi-row { display: flex; gap: 6px; margin-bottom: 4px; }
+.bi-row input { font-size: 0.8rem; padding: 3px 6px; }
+.bi-key { flex: 1; }
+.bi-val { flex: 1.4; }
+.bi-remove { background: none; color: #999; border: none; padding: 0 4px; cursor: pointer; font-size: 1rem; }
+.bi-remove:hover { color: #b00; }
+.bi-save { margin-top: 4px; padding: 3px 12px; }
+.run-a-btn { background: #1f6feb !important; }
+.run-b-btn { background: #d9822b !important; }
+.run-a-btn:disabled, .run-b-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.slot-status { font-size: 0.75rem; display: block; }
+.slot-status .green, .slot-status .red, .slot-status .warn, .slot-status .gray {
+    padding: 0 4px; border-radius: 2px; }
+
+/* Reports grouped by build */
+#reports-groupby { display: flex; align-items: center; gap: 8px; margin: 0 0 10px 0; font-size: 0.85rem; }
+.build-group-head td { background: #eef4fb; font-weight: 600; white-space: normal; }
+.build-group-head .bg-counts span { margin-right: 8px; font-weight: 400; }
+</style>
+
 <div id="main-content" style="padding-top: 20px;">
     <h1>Container: {{ testname }}</h1>
     <p class="test-identity">
         <strong>Container ID:</strong> {{ slug }}
         &nbsp;|&nbsp;
-        <strong>Path:</strong> <code>{{ project_path or "?" }}</code>
+        <!-- <strong>Path:</strong> <code>{{ project_path or "?" }}</code> -->
     </p>
     {% if container_description %}
-        <p class="container-description">{{ container_description|linkify }}</p>
+        <div class="container-description">{{ container_description|render_description }}</div>
     {% endif %}
 
-    {% if container_batch_all or container_batch_failed %}
+    {% set container_has_build_tools = test_info | selectattr('build_tool') | list | length > 0 %}
+
+    {% if container_build_tracker %}
+    <!-- Build tracker: what the tools in this container produced, and from
+         which commit. Rows are written by a passing tool run whose CONFIG
+         names build_output/build_repo, or added here by hand. Each output is
+         snapshotted by md5, so an older build stays runnable after a newer
+         one overwrites the shared output path -- that is what A & B picks
+         from. -->
+
+    {% if container_has_build_tools %}
+    <!-- Build-create selector: what each slot's build_tool run is FED,
+         before it's even run -- an arbitrary CONFIG key/value override
+         (e.g. target_branch) merged onto the tool's own CONFIG only for
+         "Build A"/"Build B" (see buildhelper.get_build_inputs/set_build_input,
+         apiv1's /containers/<c>/build-input). Sits above "Registered builds":
+         this defines the INPUT/OUTPUT for each slot; the table below is
+         unchanged -- just the run history and manual registration it always
+         was. -->
+    <div id="build-input-selector">
+        <div class="test-plan-head">
+            <span class="view-switch-label">Build Inputs</span>
+            <span class="test-plan-note">CONFIG overrides merged in for "Build A" / "Build B" on any build tool below</span>
+        </div>
+        <div id="build-input-slots">
+            {% for slot in ['A', 'B'] %}
+            <div class="bi-slot" data-slot="{{ slot }}">
+                <div class="bi-slot-head">
+                    <span class="slot-pill slot-{{ slot|lower }}">{{ slot }}</span>
+                    <a href="#" class="view-switch-edit bi-add" data-slot="{{ slot }}">+ add override</a>
+                </div>
+                <div class="bi-rows" data-slot="{{ slot }}">
+                    {% for k, v in build_input[slot].items() %}
+                    <div class="bi-row">
+                        <input class="bi-key" value="{{ k }}" placeholder="CONFIG key, e.g. target_branch">
+                        <input class="bi-val" value="{{ v }}" placeholder="value">
+                        <button type="button" class="bi-remove" title="remove">&times;</button>
+                    </div>
+                    {% endfor %}
+                </div>
+                <button type="button" class="bi-save" data-slot="{{ slot }}">Save slot {{ slot }} inputs</button>
+                <span id="bi-status-{{ slot }}" class="bi-status bt-msg"></span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div id="build-tracker">
+        <div class="test-plan-head">
+            <span class="view-switch-label">Builds</span>
+            <span class="test-plan-note">last {{ tracked_builds|length }} registered build objects</span>
+            <a href="#" class="view-switch-edit" id="bt-add-toggle">+ add build</a>
+        </div>
+        <form id="bt-add" style="display:none;" onsubmit="addBuild(event)">
+            <input id="bt-add-path" placeholder="/path/to/built/output (exe, bin, iso...)" required style="flex:3;">
+            <input id="bt-add-key" placeholder="CONFIG key, e.g. box_binary" list="bt-keys" required style="flex:1.2;">
+            <datalist id="bt-keys">
+                {% for k in tracked_builds | map(attribute='output_key') | unique %}<option value="{{ k }}">{% endfor %}
+            </datalist>
+            <input id="bt-add-repo" placeholder="git repo it was built from (optional)" style="flex:2;">
+            <input id="bt-add-label" placeholder="label (optional)" style="flex:1.2;">
+            <select id="bt-add-platform" title="what the build runs on">
+                <option value="">platform: detect</option>
+                <option value="linux">linux</option>
+                <option value="windows">windows</option>
+                <option value="macos">macos</option>
+                <option value="any">any (not an executable)</option>
+            </select>
+            <select id="bt-add-slot" title="which A/B list to add it to">
+                <option value="">no slot</option>
+                <option value="A">slot A</option>
+                <option value="B">slot B</option>
+            </select>
+            <button type="submit">Register</button>
+            <span id="bt-add-status" class="bt-msg"></span>
+        </form>
+        {% if tracked_builds %}
+        <table class="container-table build-table">
+            <!-- widths live here, not on the <td>s -- same table-layout:fixed
+                 rule as the other container tables on this page. -->
+            <colgroup>
+                <col style="width:3%">   <!-- # -->
+                <col style="width:9%">   <!-- slot -->
+                <col style="width:6%">   <!-- platform -->
+                <col style="width:10%">  <!-- registered -->
+                <col style="width:13%">  <!-- built by -->
+                <col style="width:11%">  <!-- branch -->
+                <col style="width:9%">   <!-- commit -->
+                <col style="width:8%">   <!-- md5 -->
+                <col style="width:9%">   <!-- output -->
+                <col style="width:5%">   <!-- size -->
+                <col style="width:14%">  <!-- label -->
+                <col style="width:3%">   <!-- hide -->
+            </colgroup>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th title="which A/B list the build is in; the pill marks what that slot runs on this {{ host_platform }} host">Slot</th>
+                    <th>Platform</th><th>Registered</th><th>Built by</th>
+                    <th>Branch</th><th>Commit</th><th>MD5</th><th>Output</th>
+                    <th>Size</th><th>Label</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for b in tracked_builds %}
+                {% set active_slots = [] %}
+                {% for s in ['A', 'B'] %}{% if ab_selection[s] and ab_selection[s].id == b.id %}{% set _ = active_slots.append(s) %}{% endif %}{% endfor %}
+                <tr data-build-id="{{ b.id }}" class="{{ '' if b.store_exists else 'bt-missing' }} {{ 'bt-active' if active_slots }}">
+                    <td class="plan-num">{{ b.id }}</td>
+                    <td class="bt-slot">
+                        <select onchange="setBuildSlot({{ b.id }}, this.value)" title="A/B list this build belongs to">
+                            <option value="" {{ 'selected' if not b.slot }}>—</option>
+                            <option value="A" {{ 'selected' if b.slot == 'A' }}>A</option>
+                            <option value="B" {{ 'selected' if b.slot == 'B' }}>B</option>
+                        </select>
+                        {% for s in active_slots %}<span class="slot-pill slot-{{ s|lower }}"
+                            title="slot {{ s }} runs this build on {{ host_platform }}{{ ' (pinned)' if ab_state[s].pinned else ' (newest)' }}">{{ s }}{{ '📌' if ab_state[s].pinned }}</span>{% endfor %}
+                    </td>
+                    <td><span class="bt-plat {{ '' if b.platform in (host_platform, 'any') else 'other' }}"
+                              title="{{ 'runs on this host' if b.platform in (host_platform, 'any') else ('not runnable on this ' ~ host_platform ~ ' host' if b.platform else 'unknown: snapshot unreadable') }}">{{ b.platform or '?' }}</span></td>
+                    <td class="bt-when" data-ts="{{ b.created_at }}"></td>
+                    <td title="{{ b.test_id or '' }}">{{ b.variant or b.source }}</td>
+                    <td title="{{ b.repo_path or '' }}">{{ b.git_branch or '—' }}</td>
+                    <td title="{{ b.git_sha or '' }}{{ ' — ' ~ b.git_subject if b.git_subject }}">
+                        {% if b.git_sha %}<code>{{ b.git_sha[:10] }}</code>{% if b.git_dirty %} <span class="bt-dirty" title="built from a working tree with uncommitted changes">dirty</span>{% endif %}{% else %}—{% endif %}
+                    </td>
+                    <td title="md5 {{ b.md5 }}&#10;sha256 {{ b.sha256 or '' }}"><code>{{ b.md5[:10] }}</code></td>
+                    <td title="{{ b.orig_path }}&#10;snapshot: {{ b.store_path }}{{ '' if b.store_exists else ' (MISSING)' }}"><code>{{ b.filename }}</code></td>
+                    <td>{{ ((b.file_size or 0) / 1048576) | round(1) }}M</td>
+                    <td><input class="bt-label" value="{{ b.label or '' }}" placeholder="good / bad / note…"
+                               onchange="saveBuildLabel({{ b.id }}, this)"></td>
+                    <td><button type="button" class="bt-hide" title="hide from this list"
+                                onclick="hideBuild({{ b.id }})">&times;</button></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="test-plan-note">No builds registered yet. A tool registers one when it passes
+            and its CONFIG names <code>build_output</code> (and <code>build_repo</code> for git info).</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if container_ab_testing %}
+    <!-- A & B: each slot runs the NEWEST build in its list that runs on this
+         host's platform ({{ host_platform }}), unless a build is pinned --
+         pick one and hit Pin to override, Use newest to drop the pin. Pins
+         are per platform and stored server-side, so every RUN A / RUN B
+         button below and the batch agree on what A means on this host. -->
+    {% set listed_ids = tracked_builds | map(attribute='id') | list %}
+    <div id="ab-controls">
+        {% for slot in ['A', 'B'] %}
+        {% set st = ab_state[slot] %}
+        <div class="ab-slot" id="ab-slot-{{ slot }}" data-resolved="{{ st.build.id if st.build else '' }}">
+            <span class="slot-pill slot-{{ slot|lower }}">{{ slot }}</span>
+            {% if st.build %}
+                <span class="ab-resolved" title="{{ st.build.git_branch or '' }} {{ st.build.git_sha or '' }}">
+                    {% if st.pinned %}<span class="ab-pin-badge">📌 pinned</span>{% else %}newest {{ host_platform }}:{% endif %}
+                    #{{ st.build.id }}</span>
+            {% else %}
+                <span class="ab-resolved none">no {{ host_platform }} build in list {{ slot }}</span>
+            {% endif %}
+            <select id="ab-select-{{ slot }}" title="pick a build to pin to slot {{ slot }} on {{ host_platform }}">
+                <option value="">— pick build to pin —</option>
+                {% for b in tracked_builds %}
+                    {% set runnable = b.platform in (host_platform, 'any') %}
+                    <option value="{{ b.id }}" {{ 'disabled' if not runnable }} {{ 'selected' if st.pinned and st.build.id == b.id }}>#{{ b.id }} [{{ b.platform or '?' }}]{{ ' (' ~ b.slot ~ ')' if b.slot }} {{ b.git_branch or '' }} {{ b.git_sha[:8] if b.git_sha }}{{ '+dirty' if b.git_dirty }} · {{ b.md5[:8] }}{{ ' · ' ~ b.label if b.label }}</option>
+                {% endfor %}
+                {% if st.pinned and st.build.id not in listed_ids %}
+                    <option value="{{ st.build.id }}" selected>#{{ st.build.id }} (older) · {{ st.build.md5[:8] }}</option>
+                {% endif %}
+            </select>
+            <button type="button" onclick="pinAB('{{ slot }}')" title="always run this build for slot {{ slot }} on {{ host_platform }}">Pin</button>
+            <button type="button" onclick="unpinAB('{{ slot }}')" {{ 'disabled' if not st.pinned }}
+                    title="drop the pin: run the newest {{ host_platform }} build in list {{ slot }}">Use newest</button>
+        </div>
+        {% endfor %}
+        <select id="ab-order" title="how the batch pairs variants with builds">
+            <option value="interleave">double up — each variant on A, then B</option>
+            <option value="grouped">batched — every variant on A, then every variant on B</option>
+            <option value="a">A only — every variant</option>
+            <option value="b">B only — every variant</option>
+        </select>
+        <button type="button" id="batch-run-ab-btn" onclick="runAB()">Run A &amp; B</button>
+        <span id="ab-status" class="bt-msg"></span>
+    </div>
+    {% if container_has_build_tools %}
+    <!-- Build A & B: same idea as Run A & B above, but for the build_tool
+         subset of the tools -- each one compiled once per slot (using that
+         slot's Build Inputs above) and registered straight into it. -->
+    <div id="ab-controls">
+        <span class="view-switch-label">Build tools</span>
+        <select id="build-ab-order" title="how the batch pairs build tools with slots">
+            <option value="interleave">double up — each build tool on A, then B</option>
+            <option value="grouped">batched — every build tool on A, then every build tool on B</option>
+            <option value="a">A only — every build tool</option>
+            <option value="b">B only — every build tool</option>
+        </select>
+        <button type="button" id="batch-run-build-ab-btn" onclick="runBuildAB()">Build A &amp; B</button>
+        <span id="build-ab-status" class="bt-msg"></span>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    <!-- Both layouts are rendered; the switcher only decides which one is
+         shown. They list exactly the same children from the same server-side
+         data, so neither can drift into showing a different set of tests. -->
+    <div id="view-switch">
+        <span class="view-switch-label">View</span>
+        {% for v in container_views %}
+            <button type="button" class="view-btn" data-view="{{ v }}">{{ v|capitalize }}</button>
+        {% endfor %}
+        <span class="view-switch-note">
+            default <code>{{ container_view }}</code> from
+            <code>__testparent__.py</code>
+        </span>
+        <a class="view-switch-edit" href="/containeredit/{{ slug }}">Edit container</a>
+    </div>
+
+
+        <p id="progress-status" style="display:flex; align-items:center; gap:10px;">
+        <span id="progress-text">Progress: Idle</span>
+        <button id="stop-btn" onclick="stopCurrentRun()"
+                style="display:none; background:#dc3545; color:#fff; border:none; border-radius:4px; padding:3px 12px; cursor:pointer;">
+            Stop
+        </button>
+    </p>
+
+
+    {% if container_plan %}
+    <!-- The container's shared step plan. It sits above the children because
+         it is what they are made of: a testlist here is largely a reference to
+         these, and "used by" is the warning label -- editing one of these rows
+         edits every test listed beside it. -->
+    <div id="test-plan">
+        <div class="test-plan-head">
+            <span class="view-switch-label">Test plan</span>
+            <span class="test-plan-note">shared step groups defined in
+                <code>__testplan__.py</code></span>
+            <a class="view-switch-edit" href="/containeredit/{{ slug }}">Edit plan</a>
+        </div>
+        <table class="container-table plan-table">
+            <!-- Same rule as the container-table below: table-layout:fixed
+                 sizes columns from this first (header) row only, so column
+                 widths live in this <colgroup>, not on the .plan-* body <td>
+                 rules. Column order must track the <tr> below: #, item, kind,
+                 shape, steps, imported by. -->
+            <colgroup>
+                <col style="width:3%">   <!-- # -->
+                <col style="width:26%">  <!-- plan item -->
+                <col style="width:8%">   <!-- kind -->
+                <col style="width:26%">  <!-- shape -->
+                <col style="width:7%">   <!-- steps -->
+                <col style="width:24%">  <!-- imported by -->
+            </colgroup>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Plan item</th>
+                    <th>Kind</th>
+                    <th>Shape</th>
+                    <th>Steps</th>
+                    <th>Imported by</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in container_plan %}
+                <tr>
+                    <td class="plan-num">{{ loop.index }}</td>
+                    <td class="plan-label">
+                        <span title="{{ row.description }}">{{ row.label }}</span>
+                        <div class="plan-id"><code>{{ row.id }}</code></div>
+                    </td>
+                    <td class="plan-kind {{ row.kind }}">{{ row.kind }}</td>
+                    <td class="plan-shape">
+                        {% if row.cell_count %}
+                            {{ row.cell_count }} cells &times; {{ row.step_count }} steps
+                            {% for axis in row.axes %}
+                                <div class="plan-axis">
+                                    <span class="plan-axis-name">{{ axis.name }}</span>
+                                    {{ axis.choices | join(' / ') }}
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            {{ row.step_count }} steps
+                        {% endif %}
+                    </td>
+                    <td class="plan-expands">{{ row.expands_to }}</td>
+                    <td class="plan-usedby">
+                        {% if row.used_by %}
+                            {% for name in row.used_by %}
+                                <span class="plan-user">{{ name }}</span>
+                            {% endfor %}
+                        {% else %}
+                            <span class="plan-unused">not imported by any test</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if container_batch_all or container_batch_failed or container_batch_tools %}
     <div id="batch-controls" style="margin:10px 0; display:flex; gap:10px; align-items:center;">
         {% if container_batch_all %}
         <button id="batch-run-all-btn" onclick="runBatch('all')"
                 style="background:#007bff;color:#fff;border:none;border-radius:4px;padding:6px 14px;cursor:pointer;">
-            Run All
+            Run Tests
         </button>
         {% endif %}
         {% if container_batch_failed %}
@@ -28,29 +501,43 @@
             Run Failed
         </button>
         {% endif %}
+        {% if container_batch_tools %}
+        <button id="batch-run-tools-btn" onclick="runBatch('tools')"
+                style="background:#6c757d;color:#fff;border:none;border-radius:4px;padding:6px 14px;cursor:pointer;">
+            Run Tools
+        </button>
+        {% endif %}
         <span id="batch-status" style="font-size:0.85em; color:#666;"></span>
     </div>
     {% endif %}
 
-    <p id="progress-status" style="display:flex; align-items:center; gap:10px;">
-        <span id="progress-text">Progress: Idle</span>
-        <button id="stop-btn" onclick="stopCurrentRun()"
-                style="display:none; background:#dc3545; color:#fff; border:none; border-radius:4px; padding:3px 12px; cursor:pointer;">
-            Stop
-        </button>
-    </p>
 
-    <div class="test-grid">
-        {% for test in test_info %}
+
+    <script>window.__DEFAULT_TEST_ID__ = {{ (test_info[0].module if test_info else "") | tojson }};</script>
+    {% include "_step_matrix_widget.html" %}
+
+    {% set tool_tests = test_info | selectattr('is_tool') | list %}
+    {% set plain_tests = test_info | rejectattr('is_tool') | list %}
+    <!-- Tools split in two: a build_tool compiles from a configurable input
+         and can be paired A/B (Build A/Build B, batch, Status A/B) just like
+         a variant; a host_tool (deploy steps, anything with no varying
+         input) stays mono -- one Build/Run button, one Status column. Kept
+         as separate tables/card groups below rather than one table with a
+         different column count per row, which table-layout:fixed cannot do. -->
+    {% set build_tools = tool_tests | selectattr('build_tool') | list %}
+    {% set host_tools = tool_tests | rejectattr('build_tool') | list %}
+
+    <div class="test-grid container-view" data-view="cards">
+        {% for test in plain_tests %}
             {% for type, internal in test.types.items() %}
                 {% set status = test.latest_status[type] %}
-                <div class="test-card"
+                <div class="test-card {{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else ('warn' if status == 'WARN' else 'gray')) }}"
                      data-internal="{{ internal }}"
                      data-type="{{ type }}">
                     <div class="card-header"><strong>{{ type }}</strong></div>
                     <div class="card-body">
                         <div><strong>Testlist ID:</strong> {{ test.slug }}</div>
-                        <div><strong>Path:</strong> <code>{{ test.path or 'N/A' }}</code></div>
+                        <!-- <div><strong>Path:</strong> <code>{{ test.path or 'N/A' }}</code></div> -->
                         <div><strong>System:</strong> {{ test.system or 'N/A' }}</div>
                         <div><strong>Platform:</strong> {{ test.platform or 'N/A' }}</div>
                         <div><strong>Status:</strong> <span class="card-status">{{ status or 'N/A' }}</span></div>
@@ -58,6 +545,21 @@
                     {% if test.pause_label %}
                         <div class="pause-label" style="font-size: 0.85rem; color: #c77700;">{{ test.pause_label }}</div>
                     {% endif %}
+                    {% if test.discard_writes_label %}
+                        <div class="discard-writes-label" style="font-size: 0.85rem; color: #c77700;">{{ test.discard_writes_label }}</div>
+                    {% endif %}
+                    {% if container_ab_testing %}
+                        {% for slot in ['A', 'B'] %}
+                            {% set st = test.slot_status.get(slot) %}
+                            <span class="slot-status">{{ slot }}: <span class="{{ 'green' if st == 'PASS' else ('red' if st == 'FAIL' else ('warn' if st == 'WARN' else 'gray')) }}">{{ st or 'N/A' }}</span></span>
+                        {% endfor %}
+                        <button class="run-btn run-a-btn" data-slot="A"
+                            data-internal="{{ internal }}" data-type="{{ type }}"
+                            onclick="runTest('{{ internal }}', 'A')">Run A</button>
+                        <button class="run-btn run-b-btn" data-slot="B"
+                            data-internal="{{ internal }}" data-type="{{ type }}"
+                            onclick="runTest('{{ internal }}', 'B')">Run B</button>
+                    {% else %}
                     <button
                         class="run-btn"
                         data-internal="{{ internal }}"
@@ -65,6 +567,7 @@
                         onclick="runTest('{{ internal }}')">
                         Run {{ type }}
                     </button>
+                    {% endif %}
                     <button onclick="window.location.href='/testbuilder/{{ internal }}'"
                         style="background: #6c757d; color: white; border: none; border-radius: 4px; padding: 5px; cursor: pointer;">
                         Edit
@@ -73,6 +576,374 @@
             {% endfor %}
         {% endfor %}
     </div>
+
+    {% if build_tools %}
+    <!-- Tools (build/deploy infra) get their own line, visually fenced off
+         with a dashed box, so they read as "prep steps" rather than more
+         tests in the same grid -- see "Run Tools" vs "Run Tests" above.
+         Build tools (configurable input, A/B pairable) are fenced separately
+         from host tools below: a build_tool needs the Build A/Build B pair
+         plus per-slot status when container_ab_testing is on. -->
+    <div class="container-view" data-view="cards">
+        <div class="tools-section">
+            <div class="tools-section-label">Build Tools</div>
+            <div class="test-grid tools-grid">
+                {% for test in build_tools %}
+                    {% for type, internal in test.types.items() %}
+                        {% set status = test.latest_status[type] %}
+                        <div class="test-card {{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else ('warn' if status == 'WARN' else 'gray')) }}"
+                             data-internal="{{ internal }}"
+                             data-type="{{ type }}">
+                            <div class="card-header"><strong>{{ type }}</strong></div>
+                            <div class="card-body">
+                                <div><strong>Testlist ID:</strong> {{ test.slug }}</div>
+                                <!-- <div><strong>Path:</strong> <code>{{ test.path or 'N/A' }}</code></div> -->
+                                <div><strong>System:</strong> {{ test.system or 'N/A' }}</div>
+                                <div><strong>Platform:</strong> {{ test.platform or 'N/A' }}</div>
+                                {% if not container_ab_testing %}
+                                <div><strong>Status:</strong> <span class="card-status">{{ status or 'N/A' }}</span></div>
+                                {% endif %}
+                            </div>
+                            {% if test.pause_label %}
+                                <div class="pause-label" style="font-size: 0.85rem; color: #c77700;">{{ test.pause_label }}</div>
+                            {% endif %}
+                            {% if test.discard_writes_label %}
+                                <div class="discard-writes-label" style="font-size: 0.85rem; color: #c77700;">{{ test.discard_writes_label }}</div>
+                            {% endif %}
+                            {% if container_ab_testing %}
+                                {% for slot in ['A', 'B'] %}
+                                    {% set st = test.slot_status.get(slot) %}
+                                    <span class="slot-status">{{ slot }}: <span class="{{ 'green' if st == 'PASS' else ('red' if st == 'FAIL' else ('warn' if st == 'WARN' else 'gray')) }}">{{ st or 'N/A' }}</span></span>
+                                {% endfor %}
+                                <button class="run-btn run-a-btn build-tool-btn" data-slot="A"
+                                    data-internal="{{ internal }}" data-type="{{ type }}"
+                                    onclick="runTest('{{ internal }}', 'A')">Build A</button>
+                                <button class="run-btn run-b-btn build-tool-btn" data-slot="B"
+                                    data-internal="{{ internal }}" data-type="{{ type }}"
+                                    onclick="runTest('{{ internal }}', 'B')">Build B</button>
+                            {% else %}
+                            <button
+                                class="run-btn"
+                                data-internal="{{ internal }}"
+                                data-type="{{ type }}"
+                                onclick="runTest('{{ internal }}')">
+                                Build {{ type }}
+                            </button>
+                            {% endif %}
+                            <button onclick="window.location.href='/testbuilder/{{ internal }}'"
+                                style="background: #6c757d; color: white; border: none; border-radius: 4px; padding: 5px; cursor: pointer;">
+                                Edit
+                            </button>
+                        </div>
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if host_tools %}
+    <!-- Host tools: is_tool infra with no configurable input (deploy steps,
+         etc.) -- mono, same as before build_tool existed: one Run button,
+         one Status. Never A/B paired. -->
+    <div class="container-view" data-view="cards">
+        <div class="tools-section">
+            <div class="tools-section-label">Host Tools</div>
+            <div class="test-grid tools-grid">
+                {% for test in host_tools %}
+                    {% for type, internal in test.types.items() %}
+                        {% set status = test.latest_status[type] %}
+                        <div class="test-card {{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else ('warn' if status == 'WARN' else 'gray')) }}"
+                             data-internal="{{ internal }}"
+                             data-type="{{ type }}">
+                            <div class="card-header"><strong>{{ type }}</strong></div>
+                            <div class="card-body">
+                                <div><strong>Testlist ID:</strong> {{ test.slug }}</div>
+                                <!-- <div><strong>Path:</strong> <code>{{ test.path or 'N/A' }}</code></div> -->
+                                <div><strong>System:</strong> {{ test.system or 'N/A' }}</div>
+                                <div><strong>Platform:</strong> {{ test.platform or 'N/A' }}</div>
+                                <div><strong>Status:</strong> <span class="card-status">{{ status or 'N/A' }}</span></div>
+                            </div>
+                            {% if test.pause_label %}
+                                <div class="pause-label" style="font-size: 0.85rem; color: #c77700;">{{ test.pause_label }}</div>
+                            {% endif %}
+                            {% if test.discard_writes_label %}
+                                <div class="discard-writes-label" style="font-size: 0.85rem; color: #c77700;">{{ test.discard_writes_label }}</div>
+                            {% endif %}
+                            <button
+                                class="run-btn"
+                                data-internal="{{ internal }}"
+                                data-type="{{ type }}"
+                                onclick="runTest('{{ internal }}')">
+                                Run {{ type }}
+                            </button>
+                            <button onclick="window.location.href='/testbuilder/{{ internal }}'"
+                                style="background: #6c757d; color: white; border: none; border-radius: 4px; padding: 5px; cursor: pointer;">
+                                Edit
+                            </button>
+                        </div>
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="container-view" data-view="table">
+        <table class="container-table">
+            <!-- table-layout:fixed sizes columns from the FIRST row only (the
+                 CSS2.1 fixed-layout algorithm never looks at body rows), and
+                 that row is this header -- so a width set on a body <td> (the
+                 .cell-* rules below) never participates in column sizing at
+                 all. This <colgroup> is the ONLY thing that controls column
+                 widths on this table now; the .cell-* width rules were removed
+                 to avoid the illusion that editing them still does anything.
+                 The Path column is commented out below, so it has NO <col>
+                 here either -- an extra <col> would silently shift every
+                 width after it onto the wrong column. Column order: variant,
+                 actions, id, system, flags, status (A/B when container_ab_testing). -->
+            {% if container_ab_testing %}
+            <colgroup>
+                <col style="width:22%">  <!-- variant -->
+                <col style="width:16%">  <!-- actions -->
+                <col style="width:25%">  <!-- id -->
+                <col style="width:9%">   <!-- system -->
+                <col style="width:10%">  <!-- flags -->
+                <col style="width:9%">   <!-- status A -->
+                <col style="width:9%">   <!-- status B -->
+            </colgroup>
+            {% else %}
+            <colgroup>
+                <col style="width:30%">  <!-- variant -->
+                <col style="width:10%">  <!-- actions -->
+                <col style="width:32%">  <!-- id -->
+                <col style="width:10%">  <!-- system -->
+                <col style="width:10%">  <!-- flags -->
+                <col style="width:8%">   <!-- status -->
+            </colgroup>
+            {% endif %}
+            <thead>
+                <tr>
+                    <th>Variant</th>
+                    <th>Action</th>
+                    <th>Testlist ID</th>
+                    <!-- <th>Path</th> -->
+                    <th>System</th>
+                    <th>Flags</th>
+                    {% if container_ab_testing %}
+                    <th>Status A</th>
+                    <th>Status B</th>
+                    {% else %}
+                    <th>Status</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+            {% for test in plain_tests %}
+                {% for type, internal in test.types.items() %}
+                    {% set status = test.latest_status[type] %}
+                    <tr class="test-row"
+                        data-internal="{{ internal }}"
+                        data-type="{{ type }}">
+                        <td class="cell-variant" title="{{ type }}">{{ type }}</td>
+                        <td class="cell-actions">
+                            {% if container_ab_testing %}
+                            <button class="run-btn run-a-btn" data-slot="A"
+                                    data-internal="{{ internal }}" data-type="{{ type }}"
+                                    onclick="runTest('{{ internal }}', 'A')">Run A</button>
+                            <button class="run-btn run-b-btn" data-slot="B"
+                                    data-internal="{{ internal }}" data-type="{{ type }}"
+                                    onclick="runTest('{{ internal }}', 'B')">Run B</button>
+                            {% else %}
+                            <button class="run-btn"
+                                    data-internal="{{ internal }}"
+                                    data-type="{{ type }}"
+                                    onclick="runTest('{{ internal }}')">Run</button>
+                            {% endif %}
+                            <button class="edit-btn"
+                                    onclick="window.location.href='/testbuilder/{{ internal }}'">Edit</button>
+                        </td>
+                        <td class="cell-id"><code>{{ test.slug }}</code></td>
+                        <!-- <td class="cell-path" title="{{ test.path or 'N/A' }}">
+                            <code>{{ test.path or 'N/A' }}</code>
+                        </td> -->
+                        <td class="cell-system" title="{{ test.system or 'N/A' }}">{{ test.system or 'N/A' }}</td>
+                        <td class="cell-flags">
+                            {% if test.pause_label %}<span class="flag-label">{{ test.pause_label }}</span>{% endif %}
+                            {% if test.discard_writes_label %}<span class="flag-label">{{ test.discard_writes_label }}</span>{% endif %}
+                        </td>
+                        {% if container_ab_testing %}
+                            {% set st_a = test.slot_status.get('A') %}
+                            {% set st_b = test.slot_status.get('B') %}
+                            <td class="cell-status {{ 'green' if st_a == 'PASS' else ('red' if st_a == 'FAIL' else ('warn' if st_a == 'WARN' else 'gray')) }}" title="latest run on build A">{{ st_a or '—' }}</td>
+                            <td class="cell-status {{ 'green' if st_b == 'PASS' else ('red' if st_b == 'FAIL' else ('warn' if st_b == 'WARN' else 'gray')) }}" title="latest run on build B">{{ st_b or '—' }}</td>
+                        {% else %}
+                            <td class="card-status cell-status {{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else ('warn' if status == 'WARN' else 'gray')) }}"><span class="main-status">{{ status or 'N/A' }}</span></td>
+                        {% endif %}
+                    </tr>
+                {% endfor %}
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if build_tools %}
+    <!-- Same fence as the cards view above, rendered as a second table with
+         a visible gap instead of a dashed box -- a table can't wrap a border
+         around itself the way a card grid can. Same ab-aware colgroup/column
+         set as the plain_tests table above: a build_tool is A/B pairable, so
+         it gets Build A/Build B actions and Status A/Status B when
+         container_ab_testing is on, exactly like a variant. -->
+    <div class="container-view" data-view="table">
+        <div class="tools-section tools-section-table">
+            <div class="tools-section-label">Build Tools</div>
+            <table class="container-table">
+                {% if container_ab_testing %}
+                <colgroup>
+                    <col style="width:22%">  <!-- variant -->
+                    <col style="width:16%">  <!-- actions -->
+                    <col style="width:25%">  <!-- id -->
+                    <col style="width:9%">   <!-- system -->
+                    <col style="width:10%">  <!-- flags -->
+                    <col style="width:9%">   <!-- status A -->
+                    <col style="width:9%">   <!-- status B -->
+                </colgroup>
+                {% else %}
+                <colgroup>
+                    <col style="width:30%">  <!-- variant -->
+                    <col style="width:10%">  <!-- actions -->
+                    <col style="width:32%">  <!-- id -->
+                    <col style="width:10%">  <!-- system -->
+                    <col style="width:10%">  <!-- flags -->
+                    <col style="width:8%">   <!-- status -->
+                </colgroup>
+                {% endif %}
+                <thead>
+                    <tr>
+                        <th>Variant</th>
+                        <th>Action</th>
+                        <th>Testlist ID</th>
+                        <!-- <th>Path</th> -->
+                        <th>System</th>
+                        <th>Flags</th>
+                        {% if container_ab_testing %}
+                        <th>Status A</th>
+                        <th>Status B</th>
+                        {% else %}
+                        <th>Status</th>
+                        {% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                {% for test in build_tools %}
+                    {% for type, internal in test.types.items() %}
+                        {% set status = test.latest_status[type] %}
+                        <tr class="test-row"
+                            data-internal="{{ internal }}"
+                            data-type="{{ type }}">
+                            <td class="cell-variant" title="{{ type }}">{{ type }}</td>
+                            <td class="cell-actions">
+                                {% if container_ab_testing %}
+                                <button class="run-btn run-a-btn build-tool-btn" data-slot="A"
+                                        data-internal="{{ internal }}" data-type="{{ type }}"
+                                        onclick="runTest('{{ internal }}', 'A')">Build A</button>
+                                <button class="run-btn run-b-btn build-tool-btn" data-slot="B"
+                                        data-internal="{{ internal }}" data-type="{{ type }}"
+                                        onclick="runTest('{{ internal }}', 'B')">Build B</button>
+                                {% else %}
+                                <button class="run-btn"
+                                        data-internal="{{ internal }}"
+                                        data-type="{{ type }}"
+                                        onclick="runTest('{{ internal }}')">Build</button>
+                                {% endif %}
+                                <button class="edit-btn"
+                                        onclick="window.location.href='/testbuilder/{{ internal }}'">Edit</button>
+                            </td>
+                            <td class="cell-id"><code>{{ test.slug }}</code></td>
+                            <!-- <td class="cell-path" title="{{ test.path or 'N/A' }}">
+                                <code>{{ test.path or 'N/A' }}</code>
+                            </td> -->
+                            <td class="cell-system" title="{{ test.system or 'N/A' }}">{{ test.system or 'N/A' }}</td>
+                            <td class="cell-flags">
+                                {% if test.pause_label %}<span class="flag-label">{{ test.pause_label }}</span>{% endif %}
+                                {% if test.discard_writes_label %}<span class="flag-label">{{ test.discard_writes_label }}</span>{% endif %}
+                            </td>
+                            {% if container_ab_testing %}
+                                {% set st_a = test.slot_status.get('A') %}
+                                {% set st_b = test.slot_status.get('B') %}
+                                <td class="cell-status {{ 'green' if st_a == 'PASS' else ('red' if st_a == 'FAIL' else ('warn' if st_a == 'WARN' else 'gray')) }}" title="latest build in slot A">{{ st_a or '—' }}</td>
+                                <td class="cell-status {{ 'green' if st_b == 'PASS' else ('red' if st_b == 'FAIL' else ('warn' if st_b == 'WARN' else 'gray')) }}" title="latest build in slot B">{{ st_b or '—' }}</td>
+                            {% else %}
+                                <td class="card-status cell-status {{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else ('warn' if status == 'WARN' else 'gray')) }}"><span class="main-status">{{ status or 'N/A' }}</span></td>
+                            {% endif %}
+                        </tr>
+                    {% endfor %}
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if host_tools %}
+    <!-- Host tools: mono, unchanged from before build_tool existed. -->
+    <div class="container-view" data-view="table">
+        <div class="tools-section tools-section-table">
+            <div class="tools-section-label">Host Tools</div>
+            <table class="container-table">
+                <colgroup>
+                    <col style="width:30%">  <!-- variant -->
+                    <col style="width:10%">  <!-- actions -->
+                    <col style="width:32%">  <!-- id -->
+                    <col style="width:10%">  <!-- system -->
+                    <col style="width:10%">  <!-- flags -->
+                    <col style="width:8%">   <!-- status -->
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>Variant</th>
+                        <th>Action</th>
+                        <th>Testlist ID</th>
+                        <!-- <th>Path</th> -->
+                        <th>System</th>
+                        <th>Flags</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for test in host_tools %}
+                    {% for type, internal in test.types.items() %}
+                        {% set status = test.latest_status[type] %}
+                        <tr class="test-row"
+                            data-internal="{{ internal }}"
+                            data-type="{{ type }}">
+                            <td class="cell-variant" title="{{ type }}">{{ type }}</td>
+                            <td class="cell-actions">
+                                <button class="run-btn"
+                                        data-internal="{{ internal }}"
+                                        data-type="{{ type }}"
+                                        onclick="runTest('{{ internal }}')">Run</button>
+                                <button class="edit-btn"
+                                        onclick="window.location.href='/testbuilder/{{ internal }}'">Edit</button>
+                            </td>
+                            <td class="cell-id"><code>{{ test.slug }}</code></td>
+                            <!-- <td class="cell-path" title="{{ test.path or 'N/A' }}">
+                                <code>{{ test.path or 'N/A' }}</code>
+                            </td> -->
+                            <td class="cell-system" title="{{ test.system or 'N/A' }}">{{ test.system or 'N/A' }}</td>
+                            <td class="cell-flags">
+                                {% if test.pause_label %}<span class="flag-label">{{ test.pause_label }}</span>{% endif %}
+                                {% if test.discard_writes_label %}<span class="flag-label">{{ test.discard_writes_label }}</span>{% endif %}
+                            </td>
+                            <td class="card-status cell-status {{ 'green' if status == 'PASS' else ('red' if status == 'FAIL' else ('warn' if status == 'WARN' else 'gray')) }}">{{ status or 'N/A' }}</td>
+                        </tr>
+                    {% endfor %}
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
 
     {% if failure_logs %}
         <h3>Recent Non-Passing Steps</h3>
@@ -109,7 +980,7 @@
             <tr>
                 <td>{{ step.step_name }}</td>
                 <td>{{ step.duration }}</td>
-                <td class="{{ 'green' if step.status == 'PASS' else ('red' if step.status == 'FAIL' else 'gray') }}">
+                <td class="{{ 'green' if step.status == 'PASS' else ('red' if step.status == 'FAIL' else ('warn' if step.status == 'WARN' else 'gray')) }}">
                     {{ step.status }}
                 </td>
                 <td></td>
@@ -120,6 +991,64 @@
     {% endif %}
 
     <h2>Reports History</h2>
+
+    {% if container_build_tracker %}
+    <!-- Same history keyed by the build each run used: the git commit it was
+         built from (a dirty tree is its own key -- its sha doesn't describe
+         it), or the md5 of the exact object. Only runs recorded since build
+         tracking existed carry this, so ungrouped stays the default. -->
+    <div id="reports-groupby">
+        <span class="view-switch-label">Group by</span>
+        <select id="groupby-select">
+            <option value="">none (by variant)</option>
+            <option value="commit">git commit</option>
+            <option value="md5">build object md5</option>
+        </select>
+        <span id="groupby-note" class="bt-msg"></span>
+    </div>
+    <div id="grouped-reports" style="display:none;"></div>
+    {% endif %}
+
+    <div id="ungrouped-reports">
+
+    <!-- Same reports either way: one section per variant when the page is in
+         card mode, one flat table with a Variant column when it is condensed.
+         A container with a dozen children otherwise gets a dozen headings. -->
+    <div class="container-view" data-view="table">
+        <table class="container-table reports-table">
+            <thead>
+                <tr>
+                    <th>Variant</th>
+                    <th>Report File</th>
+                    <th>Duration</th>
+                    <th>Timestamp</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for test in test_info %}
+                {% for type, internal in test.types.items() %}
+                    {% for report in test.reports %}
+                    <tr>
+                        <td class="cell-variant" title="{{ type }}">{{ type }}</td>
+                        <td><a href="/reports/{{ report.filepath }}" target="_blank">{{ report.filename }}</a></td>
+                        <td>{{ report.duration }}</td>
+                        <td>{{ report.timestamp }}</td>
+                        <td class="{{ 'green' if report.status == 'PASS' else ('red' if report.status == 'FAIL' else ('warn' if report.status == 'WARN' else 'gray')) }}">{{ report.status }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td class="cell-variant" title="{{ type }}">{{ type }}</td>
+                        <td colspan="4" class="gray" style="text-align:left;">No reports found for this variant.</td>
+                    </tr>
+                    {% endfor %}
+                {% endfor %}
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="container-view" data-view="cards">
     {% for test in test_info %}
         {% for type, internal in test.types.items() %}
             <h3>{{ type }}</h3>
@@ -139,7 +1068,7 @@
                         <td><a href="/reports/{{ report.filepath }}" target="_blank">{{ report.filename }}</a></td>
                         <td>{{ report.duration }}</td>
                         <td>{{ report.timestamp }}</td>
-                        <td class="{{ 'green' if report.status == 'PASS' else ('red' if report.status == 'FAIL' else 'gray') }}">
+                        <td class="{{ 'green' if report.status == 'PASS' else ('red' if report.status == 'FAIL' else ('warn' if report.status == 'WARN' else 'gray')) }}">
                             {{ report.status }}
                         </td>
                     </tr>
@@ -151,53 +1080,64 @@
             {% endif %}
         {% endfor %}
     {% endfor %}
+    </div>
+    </div> <!-- /ungrouped-reports -->
 </div>
 
 <script>
-let isPolling = false;
+// View switcher. The stub's "view" key is only the default; a viewer's own
+// choice is remembered per container in localStorage, so flipping one
+// container to a table doesn't change how any other one opens.
+const CONTAINER_VIEWS = {{ container_views | tojson }};
+const DEFAULT_VIEW    = {{ container_view | tojson }};
+const VIEW_KEY        = "containerview:" + {{ slug | tojson }};
+// ?view=... on the URL (the editor's preview) pins the layout: it neither
+// reads nor writes the remembered preference.
+const VIEW_FORCED     = {{ view_forced | tojson }};
 
-// Build lookup: "internal_path|type" -> status, then color cards (not buttons)
-async function colorCards() {
-    try {
-        const res = await fetch("/api/v1/tests");
-        const testfiles = (await res.json()).data.tests;
-
-        const statusMap = {};
-        testfiles.forEach(t => {
-            Object.entries(t.types || {}).forEach(([type, internalPath]) => {
-                statusMap[`${internalPath}|${type}`] = (t.latest_status || {})[type] || "";
-            });
-        });
-
-        document.querySelectorAll(".test-card").forEach(card => {
-            const key    = `${card.dataset.internal}|${card.dataset.type}`;
-            const status = statusMap[key] || "";
-
-            card.classList.remove("green", "red", "gray");
-            if (status === "PASS")      card.classList.add("green");
-            else if (status === "FAIL") card.classList.add("red");
-            else                        card.classList.add("gray");
-
-            // Keep status text in sync too
-            const statusSpan = card.querySelector(".card-status");
-            if (statusSpan && status) statusSpan.textContent = status;
-        });
-    } catch (err) {
-        console.error("Failed to color cards:", err);
-    }
+function applyView(view, persist) {
+    if (!CONTAINER_VIEWS.includes(view)) view = DEFAULT_VIEW;
+    document.querySelectorAll(".container-view").forEach(el => {
+        el.classList.toggle("view-active", el.dataset.view === view);
+    });
+    document.querySelectorAll(".view-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.view === view);
+    });
+    if (persist === false) return;
+    try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* private mode */ }
 }
 
-async function runTest(internalName) {
+function initViewSwitch() {
+    let stored = null;
+    if (!VIEW_FORCED) {
+        try { stored = localStorage.getItem(VIEW_KEY); } catch (e) { /* private mode */ }
+    }
+    applyView(CONTAINER_VIEWS.includes(stored) ? stored : DEFAULT_VIEW, !VIEW_FORCED);
+    document.querySelectorAll(".view-btn").forEach(btn => {
+        btn.addEventListener("click", () => applyView(btn.dataset.view, !VIEW_FORCED));
+    });
+}
+
+let isPolling = false;
+
+async function runTest(internalName, slot) {
     const text = document.getElementById("progress-text");
-    text.textContent = `Progress: Starting ${internalName}...`;
+    text.textContent = `Progress: Starting ${internalName}${slot ? " on build " + slot : ""}...`;
 
     try {
+        const payload = { test: internalName };
+        if (slot) payload.build = slot;
         const r = await fetch(`/api/v1/runs`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ test: internalName })
+            body: JSON.stringify(payload)
         });
-        if (!r.ok) throw new Error("Failed to start test");
+        if (!r.ok) {
+            let msg = "Failed to start test";
+            try { const b = await r.json(); if (b.error) msg = b.error.message; } catch (e) {}
+            text.textContent = `Error: ${msg}`;
+            return;
+        }
 
         if (!isPolling) {
             isPolling = true;
@@ -209,25 +1149,32 @@ async function runTest(internalName) {
     }
 }
 
-async function runBatch(mode) {
-    const btnAll    = document.getElementById("batch-run-all-btn");
-    const btnFailed = document.getElementById("batch-run-failed-btn");
-    const statusEl  = document.getElementById("batch-status");
-    if (btnAll)    btnAll.disabled = true;
-    if (btnFailed) btnFailed.disabled = true;
-    if (statusEl)  statusEl.textContent = "Starting batch...";
+async function runBatch(mode, extra) {
+    const btnAll     = document.getElementById("batch-run-all-btn");
+    const btnFailed  = document.getElementById("batch-run-failed-btn");
+    const btnTools   = document.getElementById("batch-run-tools-btn");
+    const statusEl   = document.getElementById("batch-status");
+    const btnAB      = document.getElementById("batch-run-ab-btn");
+    const btnBuildAB = document.getElementById("batch-run-build-ab-btn");
+    const allBtns    = [btnAll, btnFailed, btnTools, btnAB, btnBuildAB];
+    allBtns.forEach(b => { if (b) b.disabled = true; });
+    const target = statusEl
+        || document.getElementById(mode === "build_ab" ? "build-ab-status" : "ab-status");
+    if (target)    target.textContent = "Starting batch...";
 
     try {
         const r = await fetch(`/api/v1/containers/${encodeURIComponent("{{ slug }}")}/batch-runs`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode })
+            body: JSON.stringify({ mode, ...(extra || {}) })
         });
         const body = await r.json();
         if (!r.ok) {
-            if (statusEl) statusEl.textContent = `Error: ${body.error ? body.error.message : "could not start batch"}`;
-            if (btnAll)    btnAll.disabled = false;
-            if (btnFailed) btnFailed.disabled = false;
+            if (target) {
+                target.textContent = `Error: ${body.error ? body.error.message : "could not start batch"}`;
+                target.classList && target.classList.add("error");
+            }
+            allBtns.forEach(b => { if (b) b.disabled = false; });
             return;
         }
         if (!isPolling) {
@@ -237,8 +1184,7 @@ async function runBatch(mode) {
     } catch (err) {
         console.error(err);
         if (statusEl) statusEl.textContent = "Error: could not start batch.";
-        if (btnAll)    btnAll.disabled = false;
-        if (btnFailed) btnFailed.disabled = false;
+        allBtns.forEach(b => { if (b) b.disabled = false; });
     }
 }
 
@@ -259,8 +1205,11 @@ async function poll() {
     const text      = document.getElementById("progress-text");
     const stopBtn   = document.getElementById("stop-btn");
     const statusEl  = document.getElementById("batch-status");
-    const btnAll    = document.getElementById("batch-run-all-btn");
-    const btnFailed = document.getElementById("batch-run-failed-btn");
+    const btnAll     = document.getElementById("batch-run-all-btn");
+    const btnFailed  = document.getElementById("batch-run-failed-btn");
+    const btnTools   = document.getElementById("batch-run-tools-btn");
+    const btnAB      = document.getElementById("batch-run-ab-btn");
+    const btnBuildAB = document.getElementById("batch-run-build-ab-btn");
 
     try {
         const res   = await fetch("/api/v1/runs/current");
@@ -279,17 +1228,24 @@ async function poll() {
             if (busy) { stopBtn.disabled = false; stopBtn.textContent = "Stop"; }
         }
 
-        if (batch && statusEl) {
+        if (batch) {
             const done = (batch.results || []).length;
-            statusEl.textContent =
-                `Batch (${batch.mode}): ${done}/${batch.items.length} — ${batch.status}`;
+            const line = `Batch (${batch.mode}): ${done}/${batch.items.length} — ${batch.status}`;
+            if (statusEl) statusEl.textContent = line;
+            const abStatus = document.getElementById("ab-status");
+            if (abStatus && batch.mode === "ab") { abStatus.className = "bt-msg"; abStatus.textContent = line; }
+            const buildAbStatus = document.getElementById("build-ab-status");
+            if (buildAbStatus && batch.mode === "build_ab") { buildAbStatus.className = "bt-msg"; buildAbStatus.textContent = line; }
         }
 
         if (!busy) {
             if (batch) {
                 // Batch is no longer running -- free the buttons back up.
-                if (btnAll)    btnAll.disabled = false;
-                if (btnFailed) btnFailed.disabled = false;
+                if (btnAB)      btnAB.disabled = false;
+                if (btnBuildAB) btnBuildAB.disabled = false;
+                if (btnAll)     btnAll.disabled = false;
+                if (btnFailed)  btnFailed.disabled = false;
+                if (btnTools)   btnTools.disabled = false;
             }
             if (isPolling) {
                 text.textContent = "Progress: Complete - Updating...";
@@ -312,8 +1268,273 @@ async function poll() {
     }
 }
 
+// ── Build tracker & A/B ────────────────────────────────────────────────────
+const CONTAINER_ID = {{ slug | tojson }};
+const BUILDS_API   = `/api/v1/containers/${encodeURIComponent(CONTAINER_ID)}`;
+const GROUPBY_KEY  = "reportsgroupby:" + CONTAINER_ID;
+
+function setMsg(id, text, isError) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("error", !!isError);
+}
+
+async function apiJSON(url, method, payload) {
+    const r = await fetch(url, {
+        method, headers: { "Content-Type": "application/json" },
+        body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error ? body.error.message : `HTTP ${r.status}`);
+    return body.data;
+}
+
+function refreshSlotButtons() {
+    ["A", "B"].forEach(slot => {
+        // What the slot resolves to on THIS host (pin, else newest build of
+        // this platform in the slot's list) -- not the pin picker's value.
+        const holder = document.getElementById(`ab-slot-${slot}`);
+        const resolved = holder ? holder.dataset.resolved : "";
+        // build tools create the slot's build from its Build Inputs rather
+        // than consume one, so an empty slot must not gate "Build A/B".
+        document.querySelectorAll(`.run-btn[data-slot="${slot}"]:not(.build-tool-btn)`).forEach(btn => {
+            btn.disabled = !resolved;
+            btn.title = resolved ? `run against build #${resolved}`
+                                 : `no build for this platform in slot ${slot} -- build one or pin one first`;
+        });
+    });
+}
+
+// Pin/unpin change what a slot resolves to, which moves pills and the
+// Run buttons' target -- simplest to re-render.
+async function setAB(slot, buildId) {
+    try {
+        await apiJSON(`${BUILDS_API}/ab`, "PUT", { [slot]: buildId ? Number(buildId) : null });
+        setMsg("ab-status", buildId ? `slot ${slot} pinned to #${buildId}` : `slot ${slot} → newest`);
+        setTimeout(() => location.reload(), 400);
+    } catch (e) {
+        setMsg("ab-status", e.message, true);
+    }
+}
+
+function pinAB(slot) {
+    const id = document.getElementById(`ab-select-${slot}`).value;
+    if (!id) { setMsg("ab-status", `pick a build to pin to slot ${slot}`, true); return; }
+    setAB(slot, id);
+}
+
+function unpinAB(slot) {
+    setAB(slot, null);
+}
+
+async function setBuildSlot(id, slot) {
+    try {
+        await apiJSON(`${BUILDS_API}/builds/${id}`, "PATCH", { slot: slot || null });
+        setTimeout(() => location.reload(), 300);
+    } catch (e) {
+        setMsg("ab-status", e.message, true);
+    }
+}
+
+function runAB() {
+    const order = document.getElementById("ab-order").value;
+    try { localStorage.setItem("aborder:" + CONTAINER_ID, order); } catch (e) {}
+    setMsg("ab-status", "");
+    runBatch("ab", { ab_order: order });
+}
+
+function runBuildAB() {
+    const order = document.getElementById("build-ab-order").value;
+    try { localStorage.setItem("buildaborder:" + CONTAINER_ID, order); } catch (e) {}
+    setMsg("build-ab-status", "");
+    runBatch("build_ab", { ab_order: order });
+}
+
+// ── Build Inputs (per-slot CONFIG overrides for "Build A"/"Build B") ───────
+
+function biAddRow(slot, key, val) {
+    const rows = document.querySelector(`.bi-rows[data-slot="${slot}"]`);
+    if (!rows) return;
+    const row = document.createElement("div");
+    row.className = "bi-row";
+    row.innerHTML = `<input class="bi-key" placeholder="CONFIG key, e.g. target_branch">` +
+                    `<input class="bi-val" placeholder="value">` +
+                    `<button type="button" class="bi-remove" title="remove">&times;</button>`;
+    row.querySelector(".bi-key").value = key || "";
+    row.querySelector(".bi-val").value = val || "";
+    row.querySelector(".bi-remove").addEventListener("click", () => row.remove());
+    rows.appendChild(row);
+}
+
+async function biSaveSlot(slot) {
+    const rows = document.querySelectorAll(`.bi-rows[data-slot="${slot}"] .bi-row`);
+    const overrides = {};
+    rows.forEach(row => {
+        const k = row.querySelector(".bi-key").value.trim();
+        if (k) overrides[k] = row.querySelector(".bi-val").value;
+    });
+    try {
+        await apiJSON(`${BUILDS_API}/build-input`, "PUT", { [slot]: overrides });
+        setMsg(`bi-status-${slot}`, "saved");
+    } catch (e) {
+        setMsg(`bi-status-${slot}`, e.message, true);
+    }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
-    colorCards();
+    document.querySelectorAll(".bi-remove").forEach(btn =>
+        btn.addEventListener("click", () => btn.closest(".bi-row").remove()));
+    document.querySelectorAll(".bi-add").forEach(a =>
+        a.addEventListener("click", (ev) => { ev.preventDefault(); biAddRow(a.dataset.slot); }));
+    document.querySelectorAll(".bi-save").forEach(btn =>
+        btn.addEventListener("click", () => biSaveSlot(btn.dataset.slot)));
+});
+
+async function saveBuildLabel(id, input) {
+    try {
+        await apiJSON(`${BUILDS_API}/builds/${id}`, "PATCH", { label: input.value });
+        input.style.borderColor = "#4caf50";
+        setTimeout(() => { input.style.borderColor = ""; }, 800);
+    } catch (e) {
+        input.style.borderColor = "#b00";
+        input.title = e.message;
+    }
+}
+
+async function hideBuild(id) {
+    if (!confirm(`Hide build #${id} from the tracker? (its reports and snapshot are kept; it is unselected from A/B)`)) return;
+    try {
+        await apiJSON(`${BUILDS_API}/builds/${id}`, "PATCH", { hidden: true });
+        location.reload();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function addBuild(ev) {
+    ev.preventDefault();
+    setMsg("bt-add-status", "Hashing & snapshotting...");
+    try {
+        const data = await apiJSON(`${BUILDS_API}/builds`, "POST", {
+            path:       document.getElementById("bt-add-path").value.trim(),
+            output_key: document.getElementById("bt-add-key").value.trim(),
+            repo:       document.getElementById("bt-add-repo").value.trim(),
+            label:      document.getElementById("bt-add-label").value.trim(),
+            platform:   document.getElementById("bt-add-platform").value,
+            slot:       document.getElementById("bt-add-slot").value,
+        });
+        setMsg("bt-add-status", `registered #${data.build.id}`);
+        setTimeout(() => location.reload(), 600);
+    } catch (e) {
+        setMsg("bt-add-status", e.message, true);
+    }
+}
+
+function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g,
+        c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+const statusCls = s => s === "PASS" ? "green" : s === "FAIL" ? "red" : s === "WARN" ? "warn" : "gray";
+
+async function renderGrouped(groupBy) {
+    const grouped   = document.getElementById("grouped-reports");
+    const ungrouped = document.getElementById("ungrouped-reports");
+    try { localStorage.setItem(GROUPBY_KEY, groupBy); } catch (e) {}
+    if (!groupBy) {
+        grouped.style.display = "none";
+        ungrouped.style.display = "";
+        setMsg("groupby-note", "");
+        return;
+    }
+    setMsg("groupby-note", "Loading...");
+    let data;
+    try {
+        data = await apiJSON(`${BUILDS_API}/build-runs?group_by=${groupBy}`, "GET");
+    } catch (e) {
+        setMsg("groupby-note", e.message, true);
+        return;
+    }
+    const groups = data.groups || [];
+    const nRuns = groups.reduce((n, g) => n + g.runs.length, 0);
+    setMsg("groupby-note", `${nRuns} run(s) with a recorded build, ${groups.length} group(s)`);
+    let html = `<table class="container-table reports-table"><colgroup>
+        <col style="width:28%"><col style="width:6%"><col style="width:30%">
+        <col style="width:10%"><col style="width:16%"><col style="width:10%"></colgroup>
+        <thead><tr><th>Variant</th><th>Slot</th><th>Report File</th><th>Duration</th><th>Timestamp</th><th>Status</th></tr></thead><tbody>`;
+    if (!groups.length) {
+        html += `<tr><td colspan="6" class="gray" style="text-align:left;">No runs with a recorded build yet.</td></tr>`;
+    }
+    groups.forEach(g => {
+        let head;
+        if (groupBy === "commit") {
+            head = g.git_sha
+                ? `${esc(g.git_branch || "?")} @ <code>${esc(g.git_sha.slice(0, 12))}</code>` +
+                  (g.git_dirty ? ` <span class="bt-dirty">dirty tree</span>` : "") +
+                  ` <span class="plan-id">md5 ${g.md5s.map(m => esc(m.slice(0, 10))).join(", ")}</span>`
+                : `<em>unregistered build</em> <span class="plan-id">md5 ${g.md5s.map(m => esc(m.slice(0, 10))).join(", ")}</span>`;
+        } else {
+            head = `md5 <code>${esc(g.key)}</code>` +
+                   (g.git_sha ? ` — ${esc(g.git_branch || "?")} @ <code>${esc(g.git_sha.slice(0, 12))}</code>` +
+                                (g.git_dirty ? ` <span class="bt-dirty">dirty</span>` : "")
+                              : ` — <em>unregistered build</em>`);
+        }
+        if (g.labels.length) head += ` · ${g.labels.map(esc).join(", ")}`;
+        const counts = Object.entries(g.counts).map(([k, v]) =>
+            `<span class="${statusCls(k)}">${esc(k)} ${v}</span>`).join("");
+        html += `<tr class="build-group-head"><td colspan="4">${head}</td>
+                 <td colspan="2" class="bg-counts">${counts}</td></tr>`;
+        g.runs.forEach(r => {
+            html += `<tr>
+                <td class="cell-variant" title="${esc(r.variant)}">${esc(r.variant)}</td>
+                <td>${r.slot ? `<span class="slot-pill slot-${r.slot.toLowerCase()}">${esc(r.slot)}</span>` : ""}</td>
+                <td><a href="/reports/${esc(r.report_path)}" target="_blank">${esc((r.report_path || "").split("/").pop())}</a></td>
+                <td>${r.duration == null ? "" : esc(r.duration)}</td>
+                <td>${esc(r.timestamp)}</td>
+                <td class="${statusCls(r.status)}">${esc(r.status)}</td></tr>`;
+        });
+    });
+    html += `</tbody></table>`;
+    grouped.innerHTML = html;
+    grouped.style.display = "";
+    ungrouped.style.display = "none";
+}
+
+function initBuildTracker() {
+    // Registered timestamps are epoch seconds; render them in local time.
+    document.querySelectorAll(".bt-when").forEach(td => {
+        const ts = parseFloat(td.dataset.ts);
+        if (!ts) return;
+        const d = new Date(ts * 1000);
+        td.textContent = d.toLocaleString([], { year: "2-digit", month: "2-digit", day: "2-digit",
+                                                hour: "2-digit", minute: "2-digit" });
+        td.title = d.toString();
+    });
+    const toggle = document.getElementById("bt-add-toggle");
+    if (toggle) toggle.addEventListener("click", ev => {
+        ev.preventDefault();
+        const f = document.getElementById("bt-add");
+        f.style.display = f.style.display === "none" ? "flex" : "none";
+    });
+    const order = document.getElementById("ab-order");
+    if (order) {
+        try { const o = localStorage.getItem("aborder:" + CONTAINER_ID); if (o) order.value = o; } catch (e) {}
+    }
+    refreshSlotButtons();
+    const gb = document.getElementById("groupby-select");
+    if (gb) {
+        let stored = "";
+        try { stored = localStorage.getItem(GROUPBY_KEY) || ""; } catch (e) {}
+        gb.value = stored;
+        gb.addEventListener("change", () => renderGrouped(gb.value));
+        if (gb.value) renderGrouped(gb.value);
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    initViewSwitch();
+    initBuildTracker();
     poll();
 });
 </script>

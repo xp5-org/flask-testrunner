@@ -9,6 +9,7 @@
     .green { background-color: #c8f7c5; }
     .red   { background-color: #f7c5c5; }
     .gray  { background-color: #eeeeee; }
+    .warn  { background-color: #ffdb99; }
 
     .flex-container {
       display: flex;
@@ -47,6 +48,7 @@
 <body>
 
 <h1>Test Report: {{testlist_name}}</h1>
+{{build_banner}}
 <table>
   <tr><th>Test Name</th><th>Duration (s)</th><th>Result</th></tr>
   {{summary_rows}}

@@ -1,18 +1,28 @@
+import sys
+# Several hosts (Linux containers, a macOS VM, a Windows service) run this
+# same app.py against pyhelpers/ over one shared NFS mount. A .pyc's cache
+# validity is keyed on the source file's mtime, and a host with a wrong
+# system clock (see nodestatus.py's system_clock reporting) can write one
+# with a mtime that outranks a genuinely newer source file
+sys.dont_write_bytecode = True
+
 import os
 import re
 import threading
 import json
-import sys
 import apphelpers
 import dispatchhelper
+import stepplan
 import importlib.util
 from appstate import progress_state
 from flask import Flask, render_template, send_from_directory, jsonify, request, abort
 from jinja2 import ChoiceLoader, FileSystemLoader
 import apphelpers, test_runner
 import runhelper
+import buildhelper
 import apphelpers as testid
 from dbhelper import ReportDB, db
+import archivehelper
 from appstate import build_nav, nav, render_info_markup
 from appstate import process_registry
 from apiv1 import api_v1
@@ -25,18 +35,18 @@ from newprojecthelper import copybuildtest, copy_sourcedir, update_config_in_fil
 ### config stuff #####################
 app = Flask(__name__)
 app.jinja_env.filters["linkify"] = apphelpers.linkify
+app.jinja_env.filters["render_description"] = apphelpers.render_description
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORT_DIR = os.path.join(BASE_DIR, "reports")
 FLASKRUNNER_HELPERDIR = "/testrunnerapp/helpers"
 
 TESTLIST_ROOT     = "/testsrc/sourcedir"
 TESTSRC_HELPERDIR = "/testsrc/pyhelpers"
-TESTSRC_TESTLISTDIR = "/testsrc/mytests"
 PROJFILES_ROOT    = "/testsrc"   # project tree served read-only at /projfiles/
 DB_PATH = os.path.join(BASE_DIR, "report.sqlite")
 #######################################
-if TESTSRC_TESTLISTDIR not in sys.path:
-    sys.path.insert(0, TESTSRC_TESTLISTDIR)
+if TESTSRC_HELPERDIR not in sys.path:
+    sys.path.insert(0, TESTSRC_HELPERDIR)
 
 
 @app.context_processor
@@ -152,7 +162,6 @@ def api_validate_steps():
 
 # index front page stuff
 
-FRONT_PAGE_REPORTS_PER_TESTLIST = 3
 _index_cache_lock = threading.Lock()
 _index_cache = {"report_id": None, "data": None}
 
@@ -166,10 +175,7 @@ def get_index_summaries(db_conn):
     if not apphelpers.testfile_registry:
         test_runner.reload_tests()
 
-    data = (
-        db_conn.get_all_reports_summary(per_parent_limit=FRONT_PAGE_REPORTS_PER_TESTLIST),
-        db_conn.get_latest_report_summary(known_test_ids=apphelpers.testfile_registry.keys()),
-    )
+    data = db_conn.get_latest_report_summary(known_test_ids=apphelpers.testfile_registry.keys())
 
     with _index_cache_lock:
         _index_cache["report_id"] = latest_report_id
@@ -184,9 +190,53 @@ def index():
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
     db_conn = ReportDB()
-    summaries, latest_summary = get_index_summaries(db_conn)
-    return render_template("index.html",
-                           summaries=summaries, latest_summary=latest_summary)
+    latest_summary = get_index_summaries(db_conn)
+    return render_template("index.html", latest_summary=latest_summary)
+
+
+@app.route("/reports")
+@nav("Reports")
+def reports_page():
+    db_conn = ReportDB()
+    summaries = db_conn.get_all_reports_summary()
+    return render_template("reports.html", summaries=summaries)
+
+
+@app.route("/api/archive_reports", methods=["POST"])
+def api_archive_reports():
+    """Archive reports for one container. keep only its N most
+    recent or clearing all report. Keyed on testparentname
+    """
+    body = request.get_json(silent=True) or {}
+    testparentname = body.get("testparentname")
+    mode = body.get("mode")
+
+    if not testparentname or mode not in ("keep_n", "container"):
+        return jsonify({"status": "error",
+                        "message": "testparentname and mode ('keep_n' or 'container') are required"}), 400
+
+    db_conn = ReportDB()
+    report_ids = db_conn.get_report_ids_for_testparentname(testparentname)
+
+    if mode == "keep_n":
+        try:
+            keep_n = int(body.get("keep_n"))
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "keep_n must be an integer"}), 400
+        if keep_n < 0:
+            return jsonify({"status": "error", "message": "keep_n must be >= 0"}), 400
+        report_ids = report_ids[keep_n:]
+
+    if not report_ids:
+        return jsonify({"status": "ok", "archived": [], "failed": [],
+                        "message": "Nothing to archive"})
+
+    result = archivehelper.archive_reports(report_ids, db_conn, report_dir=REPORT_DIR)
+
+    with _index_cache_lock:
+        _index_cache["data"] = None
+
+    return jsonify({"status": "ok", **result})
 
 
 
@@ -258,6 +308,18 @@ def testbuilder(test_id):
 
 
 # test registry
+@app.route("/containeredit", defaults={"container": None})
+@app.route("/containeredit/<path:container>")
+@nav("Containers")
+def containeredit(container):
+    """Stripped-down editor for a directory's __testparent__.py.
+
+    edits the container summary and uses basic markdown support 
+    """
+    test_runner.reload_tests()
+    return render_template("containeredit.html", initial_container=container)
+
+
 @app.route("/failed_tests")
 def failedtestsinfo():
     test_runner.reload_tests()
@@ -331,6 +393,13 @@ def view_report(filepath):
         return "File not found", 404
     directory, filename = os.path.split(full_path)
     return send_from_directory(directory, filename)
+
+
+@app.route("/matrix/<path:test_id>")
+def matrix_viewer(test_id):
+    """step-matrix viewer and pause editor
+    """
+    return render_template("matrix_viewer.html", test_id=test_id)
 
 
 @app.route("/projfiles/<path:filepath>")
@@ -515,55 +584,100 @@ def test_details(container):
     report_name = request.args.get("report_name")
     test_runner.reload_tests()
 
-    children = testid.resolve_container(container, apphelpers.testfile_registry)
-    if not children:
-        return "Container not found", 404
+    # clears and rebuilds testfile_registry in place, so a snapshot taken
+    # without the lock can list a modname that's gone by the time it's
+    # indexed
+    with apphelpers.registry_lock:
+        children = testid.resolve_container(container, apphelpers.testfile_registry)
+        if not children:
+            return "Container not found", 404
 
-    meta        = apphelpers.testfile_registry[children[0]]
-    human_label = meta["id"]
+        meta        = apphelpers.testfile_registry[children[0]]
+        human_label = meta["id"]
 
-    container_dirpath = None
-    full_path = meta.get("__full_path__")
-    if full_path:
-        container_dirpath = os.path.dirname(os.path.abspath(full_path))
-    container_parent = apphelpers.load_parent(container_dirpath) if container_dirpath else None
-    container_description = (container_parent or {}).get("description")
-    container_batch_all    = bool((container_parent or {}).get("batch_run_all"))
-    container_batch_failed = bool((container_parent or {}).get("batch_run_failed"))
+        container_dirpath = None
+        full_path = meta.get("__full_path__")
+        if full_path:
+            container_dirpath = os.path.dirname(os.path.abspath(full_path))
+        container_parent = apphelpers.load_parent(container_dirpath) if container_dirpath else None
+        container_description = (container_parent or {}).get("description")
+        container_batch_all    = bool((container_parent or {}).get("batch_run_all"))
+        container_batch_failed = bool((container_parent or {}).get("batch_run_failed"))
+        container_batch_tools  = bool((container_parent or {}).get("batch_run_tools"))
+        # A & B implies the tracker: the slots are picked from its rows.
+        container_ab_testing   = bool((container_parent or {}).get("ab_testing"))
+        container_build_tracker = (container_ab_testing
+                                   or bool((container_parent or {}).get("build_tracker")))
+        # Which layout the page opens in. The switcher in the template lets a
+        # viewer flip it for themselves; this is only the default the stub
+        # declares, for containers where one layout is plainly the right one.
+        container_view = apphelpers.parent_view(container_parent)
+        # ?view=table|cards forces a layout for this request only: it is what
+        # the container editor previews an unsaved choice with, and it beats
+        # the viewer's own remembered preference so the preview is honest.
+        requested_view = (request.args.get("view") or "").strip().lower()
+        view_forced = requested_view in apphelpers.CONTAINER_VIEWS
+        if view_forced:
+            container_view = requested_view
 
-    all_summaries  = db.get_all_reports_summary(test_parent_name=human_label, per_parent_limit=3)
-    latest_summary = db.get_latest_namedteststatus(human_label)
+        all_summaries  = db.get_all_reports_summary(test_parent_name=human_label, per_parent_limit=3)
+        latest_summary = db.get_latest_namedteststatus(human_label)
 
-    summary_by_type = {}
-    for s in latest_summary:
-        if s["testparentname"] != human_label:
-            continue
-        types_field = s.get("types")
-        summary_types = types_field if isinstance(types_field, list) else [
-            t.strip() for t in (types_field or "").split(",") if t.strip()
-        ]
-        for type_name in summary_types:
-            summary_by_type.setdefault(type_name, []).append(s)
+        summary_by_type = {}
+        for s in latest_summary:
+            if s["testparentname"] != human_label:
+                continue
+            types_field = s.get("types")
+            summary_types = types_field if isinstance(types_field, list) else [
+                t.strip() for t in (types_field or "").split(",") if t.strip()
+            ]
+            for type_name in summary_types:
+                summary_by_type.setdefault(type_name, []).append(s)
 
-    all_mods = list(apphelpers.testfile_registry.keys())
-    matching_tests = []
-    for modname in children:
-        info = apphelpers.testfile_registry[modname]
-        test_copy = dict(info)
-        test_copy["module"] = modname
-        test_copy["slug"]   = testid.slug_for(modname, all_mods)
-        test_copy["path"]   = apphelpers.project_relpath(info)
-        test_copy["latest_status"] = {}
-        for type_name in info.get("types", {}):
-            type_summary = summary_by_type.get(type_name, [])
-            if not type_summary:
-                test_copy["latest_status"][type_name] = None
-            elif any(s["status"] in ("FAIL", "ERROR") for s in type_summary):
-                test_copy["latest_status"][type_name] = "FAIL"
-            else:
-                test_copy["latest_status"][type_name] = "PASS"
-        test_copy["pause_label"] = _pause_step_label(modname)
-        matching_tests.append(test_copy)
+        all_mods = list(apphelpers.testfile_registry.keys())
+        matching_tests = []
+        for modname in children:
+            info = apphelpers.testfile_registry[modname]
+            test_copy = dict(info)
+            test_copy["module"] = modname
+            test_copy["slug"]   = testid.slug_for(modname, all_mods)
+            test_copy["path"]   = apphelpers.project_relpath(info)
+            test_copy["latest_status"] = {}
+            for type_name in info.get("types", {}):
+                type_summary = summary_by_type.get(type_name, [])
+                if not type_summary:
+                    test_copy["latest_status"][type_name] = None
+                elif any(s["status"] in ("FAIL", "ERROR") for s in type_summary):
+                    test_copy["latest_status"][type_name] = "FAIL"
+                elif any(s["status"] == "WARN" for s in type_summary):
+                    test_copy["latest_status"][type_name] = "WARN"
+                elif any(s["status"] == "SKIP" for s in type_summary):
+                    # A step skipped by an abort (e.g. a pause_on step cutting
+                    # the run short) means whatever it would have asserted
+                    # never ran -- must not fall through to PASS just because
+                    # nothing that DID run failed.
+                    test_copy["latest_status"][type_name] = "SKIP"
+                else:
+                    test_copy["latest_status"][type_name] = "PASS"
+            test_copy["pause_label"] = _pause_step_label(modname)
+            test_copy["discard_writes_label"] = _discard_writes_label(modname)
+            matching_tests.append(test_copy)
+
+    container_plan = _container_plan_rows(children, container_dirpath)
+
+    # Build tracker / A&B. Keyed by the container id (the URL slug)
+    tracked_builds, ab_selection, slot_status = [], {"A": None, "B": None}, {}
+    ab_state = {s: {"build": None, "pinned": False, "newest": None} for s in buildhelper.SLOTS}
+    build_input = {"A": {}, "B": {}}
+    if container_build_tracker:
+        tracked_builds = buildhelper.list_builds(container, limit=25)
+        ab_state       = buildhelper.slot_state(container)
+        ab_selection   = {s: st["build"] for s, st in ab_state.items()}
+        build_input    = buildhelper.get_build_inputs(container)
+    if container_ab_testing:
+        slot_status = buildhelper.latest_by_slot(container)
+    for test_copy in matching_tests:
+        test_copy["slot_status"] = slot_status.get(test_copy["module"], {})
 
     latest_summary = db.get_latest_report_summary(human_label)
     failure_logs   = db.get_failed_steps_log(human_label)
@@ -601,8 +715,8 @@ def test_details(container):
             "timestamp": r[3],
         })
 
-    for variant_reports in reports_by_variant.values():
-        variant_reports.sort(key=lambda r: r["timestamp"], reverse=True)
+    # bug : a run made while the host clock was skewed
+    # stamps a future start_time and sticks at the top of the list, disagreeing with the id-based status column.
 
     for test_copy in matching_tests:
         test_copy["reports"] = reports_by_variant.get(test_copy["module"], [])
@@ -616,10 +730,111 @@ def test_details(container):
         container_description=container_description,
         container_batch_all=container_batch_all,
         container_batch_failed=container_batch_failed,
+        container_batch_tools=container_batch_tools,
+        container_build_tracker=container_build_tracker,
+        container_ab_testing=container_ab_testing,
+        tracked_builds=tracked_builds,
+        ab_selection=ab_selection,
+        ab_state=ab_state,
+        host_platform=buildhelper.host_platform(),
+        build_input=build_input,
+        ab_orders=list(buildhelper.AB_ORDERS),
+        container_view=container_view,
+        container_views=list(apphelpers.CONTAINER_VIEWS),
+        view_forced=view_forced,
+        container_plan=container_plan,
         latest_summary=latest_summary,
         failure_logs=failure_logs,
         build_artifacts=build_artifacts,
     )
+
+
+def _container_plan_rows(children, container_dirpath):
+    """The container's plan as table rows: what it defines, and who uses it.
+    """
+    if not container_dirpath:
+        return []
+    try:
+        plan = stepplan.load_plan(container_dirpath)
+    except stepplan.PlanError as e:
+        return [{"kind": "error", "id": "__testplan__.py", "label": str(e),
+                 "used_by": [], "step_count": 0}]
+    if not plan:
+        return []
+
+    import apiv1
+    usage = {}
+    for modname in children:
+        with apphelpers.registry_lock:
+            info = apphelpers.testfile_registry.get(modname) or {}
+        full_path = info.get("__full_path__")
+        if not full_path or not os.path.exists(full_path):
+            continue
+        try:
+            cfg = apiv1._extract_config(full_path)
+        except Exception:
+            continue
+
+        labels = sorted(info.get("types") or {}) or [modname.split(".")[-1]]
+        for entry in (cfg.get("steps") or []):
+            kind = stepplan.entry_kind(entry)
+            key = entry.get("use") if kind == "template" else entry.get("matrix")
+            if not key:
+                continue
+            for lbl in labels:
+                usage.setdefault(key, [])
+                if lbl not in usage[key]:
+                    usage[key].append(lbl)
+
+    rows = []
+    for tid, tpl in (plan.get("templates") or {}).items():
+        steps = (tpl or {}).get("steps") or []
+        rows.append({
+            "kind": "template", "id": tid,
+            "label": (tpl or {}).get("label") or tid,
+            "description": (tpl or {}).get("description") or "",
+            "step_count": len(steps), "cell_count": None,
+            "expands_to": len(steps),
+            "used_by": usage.get(tid, []),
+            "axes": [],
+        })
+    for mid, mtx in (plan.get("matrices") or {}).items():
+        steps = (mtx or {}).get("steps") or []
+        try:
+            cells = stepplan.matrix_cells({"matrix": mid}, plan)
+        except stepplan.PlanError:
+            cells = (mtx or {}).get("cells") or []
+        rows.append({
+            "kind": "matrix", "id": mid,
+            "label": (mtx or {}).get("label") or mid,
+            "description": (mtx or {}).get("description") or "",
+            "step_count": len(steps), "cell_count": len(cells),
+            "expands_to": sum(len(steps) - len(c.get("skip") or []) for c in cells),
+            "used_by": usage.get(mid, []),
+            "axes": _matrix_axis_summary(cells),
+        })
+    rows.sort(key=lambda r: (r["kind"] != "matrix", r["label"].lower()))
+    return rows
+
+
+def _matrix_axis_summary(cells):
+    """The varying values of a matrix, as (name, [values]) pairs.
+    """
+    skip = {"id", "label", "description", "override", "skip", "wav",
+            "call_no", "prev_call", "prev_rate", "prev_bits", "slug",
+            "verdict", "probe_verb"}
+    seen = {}
+    for cell in cells:
+        for k, v in (cell or {}).items():
+            if k in skip or isinstance(v, (dict, list)):
+                continue
+            seen.setdefault(k, [])
+            if v not in seen[k]:
+                seen[k].append(v)
+    # "choices", not "values": Jinja resolves row.values to dict.values, the
+    # method, and renders a TypeError rather than the list.
+    return [{"name": k, "choices": v} for k, v in seen.items()
+            if 2 <= len(v) <= 12]
 
 
 def _pause_step_label(modname: str) -> str | None:
@@ -638,21 +853,48 @@ def _pause_step_label(modname: str) -> str | None:
     return None
 
 
+def _discard_writes_label(modname: str) -> str | None:
+    """'discard_writes' badge for a testlist with a step whose param explicitly
+    sets hdd1_persist to false.  
+    
+    When set to true, rebuilds C: overlay is rebuilt fresh from its
+    template every run
+
+    hdd1_persist lives inside a step's "param" dict
+    """
+    cfg = _load_module_config(modname)
+    if not cfg:
+        return None
+    for step in cfg.get("steps", []):
+        param = step.get("param", {})
+        if "hdd1_persist" in param and not test_runner._pause_flag(param["hdd1_persist"]):
+            return "discard_writes"
+    return None
+
+
 # for testbuilder
 def _load_module_config(src_module: str) -> dict | None:
     """
     Accepts slug or module dot-path
     Load and return the CONFIG dict from a testlist module.
     Shared by module_path, test_details, and api_build_artifacts.
+
+    Plan references are expanded, so the steps here are the ones that will
+    run. That matters for the callers that COUNT steps -- _pause_step_label
+    reports "PAUSE - STEP7" and has to mean the same step 7 the runner and the
+    report mean. Whoever needs the literal on-disk form (the editor, the
+    writer) goes through apiv1._raw_config instead.
     """
     import apiv1
     full_path = apiv1._full_path(src_module)
     if not full_path:
         return None
     try:
-        return apiv1._extract_config(full_path)
+        cfg = apiv1._extract_config(full_path)
     except ValueError:
         return None
+    resolved, _notes = stepplan.resolve_config(cfg, full_path, strict=False)
+    return resolved
 
 
 # test desc
@@ -957,9 +1199,9 @@ def clone_disk_image_route():
 def _load_artifacthelpers():
     """Load the projects artifacthelpers module fresh.
     Returns module, error_str."""
-    helper_file = os.path.join(TESTSRC_HELPERDIR, "artifacthelpers.py")
+    helper_file = os.path.join(TESTSRC_HELPERDIR, "mediahelpers.py")
     if not os.path.isfile(helper_file):
-        return None, "project has no artifacthelpers.py"
+        return None, "project has no mediahelpers.py"
     spec = importlib.util.spec_from_file_location("artifacthelpers_diskutil", helper_file)
     mod  = importlib.util.module_from_spec(spec)
     try:
@@ -1144,9 +1386,9 @@ def disk_toplevel_route():
 
 def _load_medialibhelpers():
     """Load the project's medialibhelpers module fresh. Returns (module, error)."""
-    helper_file = os.path.join(TESTSRC_HELPERDIR, "medialibhelpers.py")
+    helper_file = os.path.join(TESTSRC_HELPERDIR, "mediahelpers.py")
     if not os.path.isfile(helper_file):
-        return None, "project has no medialibhelpers.py"
+        return None, "project has no mediahelpers.py"
     spec = importlib.util.spec_from_file_location("medialibhelpers_diskutil", helper_file)
     mod  = importlib.util.module_from_spec(spec)
     try:
@@ -1294,4 +1536,9 @@ if os.path.isfile(route_file):
 if __name__ == "__main__":
     test_runner.db.init_report_db()
     test_runner.reload_tests()
+    try:
+        import nodestatus
+        nodestatus.start_reporter_thread()
+    except Exception as e:
+        print(f"nodestatus reporter not started: {e}")
     app.run(host="0.0.0.0", port=8080, debug=True, use_reloader=False)

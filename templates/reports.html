@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<style>
+#summaries-table td {
+    width: 100%;
+    table-layout: auto;
+}
+
+#archive-panel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0 20px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #f9f9f9;
+}
+
+#archive-panel select, #archive-panel input[type="number"] {
+    padding: 4px;
+}
+
+#archive-panel button {
+    padding: 6px 12px;
+    background: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#archive-panel button:hover {
+    background: #b02a37;
+}
+
+#archive-status {
+    width: 100%;
+    font-size: 0.9em;
+}
+</style>
+
+<h2>Reports</h2>
+
+<div id="archive-panel">
+    <label for="archive-container-select">Container:</label>
+    <select id="archive-container-select"></select>
+
+    <label><input type="radio" name="archive-mode" value="keep_n" checked> Keep newest</label>
+    <input type="number" id="archive-keep-n" value="5" min="0" style="width:60px;">
+    <span style="font-size:0.85em; color:#666;">(across all its variants combined)</span>
+
+    <label><input type="radio" name="archive-mode" value="container"> Archive whole container</label>
+
+    <button id="archive-btn">Archive</button>
+    <span id="archive-status"></span>
+</div>
+
+<table id="summaries-table">
+    <tr><th>Report</th><th>Container</th><th>Duration</th><th>Timestamp</th><th>Status</th></tr>
+    {% for report, duration, status, timestamp, test_id, testparentname in summaries %}
+    <tr data-testparentname="{{ testparentname }}">
+        <td><a href="{{ url_for('view_report', filepath=report) }}">{{ report }}</a></td>
+        <td>{{ testparentname }}</td>
+        <td>{{ duration }}</td>
+        <td>{{ timestamp }}</td>
+        <td class="{{ 'green' if status.upper() == 'PASS' else ('red' if status.upper() == 'FAIL' else ('warn' if status.upper() == 'WARN' else 'gray')) }}">
+            {{ status }}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+
+<script>
+const bgcolor1 = "#f5f5f5";
+const bgcolor2 = "#e0e0e0";
+
+document.addEventListener("DOMContentLoaded", () => {
+    const rows = Array.from(document.querySelectorAll("#summaries-table tr")).slice(1);
+    rows.forEach((row, i) => {
+        row.style.backgroundColor = (i % 2 === 0) ? bgcolor1 : bgcolor2;
+    });
+
+    // Populate the container picker from what's already on the page -- every
+    // distinct testparentname that has a report row.
+    const select = document.getElementById("archive-container-select");
+    const seen = new Set();
+    rows.forEach(row => {
+        const name = row.dataset.testparentname;
+        if (!name || seen.has(name)) return;
+        seen.add(name);
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        select.appendChild(opt);
+    });
+
+    document.getElementById("archive-btn").addEventListener("click", async () => {
+        const statusEl = document.getElementById("archive-status");
+        const testparentname = select.value;
+        const mode = document.querySelector('input[name="archive-mode"]:checked').value;
+
+        if (!testparentname) {
+            statusEl.textContent = "No container selected.";
+            return;
+        }
+
+        let confirmMsg = mode === "container"
+            ? `Archive ALL reports for "${testparentname}" (every variant)? This moves them out of report.sqlite/reports/.`
+            : `Archive all but the newest ${document.getElementById("archive-keep-n").value} reports for "${testparentname}" (across all its variants)?`;
+        if (!confirm(confirmMsg)) return;
+
+        const payload = { testparentname: testparentname, mode: mode };
+        if (mode === "keep_n") {
+            payload.keep_n = parseInt(document.getElementById("archive-keep-n").value, 10) || 0;
+        }
+
+        statusEl.textContent = "Archiving...";
+        try {
+            const res = await fetch("/api/archive_reports", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (!res.ok || data.status !== "ok") {
+                statusEl.textContent = `Error: ${data.message || res.status}`;
+                return;
+            }
+            const archivedCount = (data.archived || []).length;
+            const failedCount = (data.failed || []).length;
+            statusEl.textContent = `Archived ${archivedCount} report(s).` +
+                (failedCount ? ` ${failedCount} failed -- see server log.` : "");
+            if (archivedCount) {
+                setTimeout(() => location.reload(), 1200);
+            }
+        } catch (err) {
+            console.error(err);
+            statusEl.textContent = "Request failed.";
+        }
+    });
+});
+</script>
+{% endblock %}

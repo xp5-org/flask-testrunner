@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!--
+  Container editor: a form over one directory's __testparent__.py.
+
+  Deliberately far smaller than the testbuilder, which edits a testlist's
+  steps. What lives here is everything the container page reads off the stub
+  but has never had a UI for: its blurb, whether it offers the batch run
+  buttons, and which layout it opens in. Identity (name/archtype/platform) is
+  shown read-only -- see the note in the markup for why.
+-->
+
+<style>
+#ce-wrap { display: flex; gap: 20px; align-items: flex-start; }
+#ce-form { flex: 0 0 420px; }
+#ce-preview { flex: 1; min-width: 0; }
+
+#ce-form .field { margin-bottom: 14px; }
+#ce-form label.field-label {
+    display: block; font-weight: 600; color: #666;
+    text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+#ce-form .hint { font-size: 0.75rem; color: #888; margin-top: 3px; }
+#ce-form textarea, #ce-form select, #ce-form input[type=text] {
+    width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px;
+    font: inherit; font-size: 0.85rem; box-sizing: border-box; background: #fff;
+}
+#ce-form textarea { min-height: 90px; resize: vertical; }
+#ce-form .readonly {
+    background: #f1f1f1; color: #555; padding: 6px; border: 1px solid #e0e0e0;
+    border-radius: 4px; font-size: 0.85rem; word-break: break-word;
+}
+#ce-form .check { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+#ce-form .check input { margin: 0; }
+.ce-card { background: #fff; border: 1px solid #ddd; border-radius: 5px; padding: 15px; }
+#ce-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+#ce-status { font-size: 0.8rem; color: #666; }
+#ce-status.error { color: #721c24; }
+#ce-status.saved { color: #155724; }
+#ce-frame {
+    width: 100%; height: 78vh; border: 1px solid #ddd; border-radius: 5px;
+    background: #fff;
+}
+.ce-preview-head {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 6px;
+    font-size: 0.8rem; color: #666;
+}
+.ce-dirty { color: #c77700; font-weight: 600; }
+</style>
+
+<h1>Container Editor</h1>
+<p id="ce-intro" style="font-size:0.85rem;color:#666;">
+    Edits one directory's <code>__testparent__.py</code>. The preview on the
+    right is the live container page, re-rendered with the layout selected
+    here — unsaved choices show up in the preview before they are written.
+</p>
+
+<div id="ce-wrap">
+    <div id="ce-form" class="ce-card">
+        <div class="field">
+            <label class="field-label" for="ce-container">Container</label>
+            <select id="ce-container"></select>
+        </div>
+
+        <div class="field">
+            <label class="field-label">Identity (read-only)</label>
+            <div class="readonly" id="ce-identity">—</div>
+            <div class="hint">
+                name / archtype / platform are the container's identity: every
+                child testlist repeats the name in <code>CONFIG["parent"]</code>
+                and fails to load if it stops matching, and name + archtype is
+                the id this page, the container URL and all of its stored
+                status history are keyed by. Renaming is a multi-file edit, so
+                it is not a field here.
+            </div>
+        </div>
+
+        <div class="field">
+            <label class="field-label" for="ce-view">Default view</label>
+            <select id="ce-view">
+                <option value="cards">cards — one card per child</option>
+                <option value="table">table — condensed spreadsheet rows</option>
+            </select>
+            <div class="hint">
+                Which layout <code>/test/&lt;container&gt;</code> opens in. A
+                viewer can still flip it on the page itself; this is the
+                default they get first.
+            </div>
+        </div>
+
+        <div class="field">
+            <label class="field-label" for="ce-description">Description</label>
+            <textarea id="ce-description" placeholder="What this container is for. URLs become links."></textarea>
+            <div class="hint">Shown under the container heading. Empty removes it.</div>
+        </div>
+
+        <div class="field">
+            <label class="field-label">Batch buttons</label>
+            <div class="check">
+                <input type="checkbox" id="ce-batch-all">
+                <label for="ce-batch-all">Run Tests — run every child except <code>batch_exclude</code> and <code>is_tool</code> ones</label>
+            </div>
+            <div class="check" style="margin-top:6px;">
+                <input type="checkbox" id="ce-batch-failed">
+                <label for="ce-batch-failed">Run Failed — re-run only children whose last run failed</label>
+            </div>
+            <div class="check" style="margin-top:6px;">
+                <input type="checkbox" id="ce-batch-tools">
+                <label for="ce-batch-tools">Run Tools — run only children marked <code>is_tool</code> (build/deploy infra, kept out of Run Tests)</label>
+            </div>
+        </div>
+
+        <div class="field">
+            <label class="field-label">Builds</label>
+            <div class="check">
+                <input type="checkbox" id="ce-build-tracker">
+                <label for="ce-build-tracker">Build tracker — table of the last builds the tools registered: branch, commit, md5 of the output</label>
+            </div>
+            <div class="check" style="margin-top:6px;">
+                <input type="checkbox" id="ce-ab-testing">
+                <label for="ce-ab-testing">A &amp; B — pick two builds; every non-tool variant gets Run A / Run B, plus a batch that runs them all on both (implies the tracker)</label>
+            </div>
+            <div class="hint">
+                A tool registers a build when it passes and its CONFIG names
+                <code>build_output</code> (the CONFIG key of the file it made,
+                e.g. <code>box_binary</code>) and <code>build_repo</code>. An
+                A/B run points that same key at the chosen build's snapshot.
+            </div>
+        </div>
+
+        <div id="ce-computed" class="field" style="display:none;">
+            <label class="field-label">Computed in the stub</label>
+            <div class="readonly" id="ce-computed-list"></div>
+            <div class="hint">
+                These keys are built in Python in the stub rather than written
+                as literals, so writing them here would freeze the expression
+                into whatever it evaluated to just now. Edit the file directly.
+            </div>
+        </div>
+
+        <div id="ce-actions">
+            <button type="button" id="ce-save">Save</button>
+            <button type="button" id="ce-revert" style="background:#6c757d;">Revert</button>
+            <span id="ce-status"></span>
+        </div>
+
+        <div class="hint" style="margin-top:10px;">
+            Writes: <code id="ce-stub">—</code>
+        </div>
+    </div>
+
+    <div id="ce-preview">
+        <div class="ce-preview-head">
+            <strong>Preview</strong>
+            <span id="ce-preview-view"></span>
+            <span id="ce-dirty" class="ce-dirty"></span>
+            <a id="ce-open" href="#" target="_blank" style="margin-left:auto;">Open full page &#10530;</a>
+        </div>
+        <iframe id="ce-frame" src="about:blank" title="container preview"></iframe>
+    </div>
+</div>
+
+<script>
+const INITIAL_CONTAINER = {{ initial_container | tojson }};
+
+const el = id => document.getElementById(id);
+let current  = null;  // container id being edited
+let saved    = null;  // last known on-disk values, for Revert / dirty check
+let computed = [];    // keys this stub builds in Python -- never written back
+
+function formValues() {
+    return {
+        view:             el("ce-view").value,
+        description:      el("ce-description").value.trim(),
+        batch_run_all:    el("ce-batch-all").checked,
+        batch_run_failed: el("ce-batch-failed").checked,
+        batch_run_tools:  el("ce-batch-tools").checked,
+        build_tracker:    el("ce-build-tracker").checked,
+        ab_testing:       el("ce-ab-testing").checked,
+    };
+}
+
+function setForm(values) {
+    el("ce-view").value              = values.view;
+    el("ce-description").value       = values.description || "";
+    el("ce-batch-all").checked       = !!values.batch_run_all;
+    el("ce-batch-failed").checked    = !!values.batch_run_failed;
+    el("ce-batch-tools").checked     = !!values.batch_run_tools;
+    el("ce-build-tracker").checked   = !!values.build_tracker;
+    el("ce-ab-testing").checked      = !!values.ab_testing;
+}
+
+function isDirty() {
+    if (!saved) return false;
+    const now = formValues();
+    return Object.keys(now).some(k => now[k] !== saved[k]);
+}
+
+function previewUrl() {
+    // ?view= pins the layout, so the preview shows the choice in the form
+    // rather than whatever this browser last looked at that container in.
+    return `/test/${encodeURIComponent(current)}?view=${encodeURIComponent(el("ce-view").value)}`;
+}
+
+function refreshPreview() {
+    if (!current) return;
+    const url = previewUrl();
+    el("ce-frame").src = url;
+    el("ce-open").href = url;
+    el("ce-preview-view").textContent = `(${el("ce-view").value})`;
+    el("ce-dirty").textContent = isDirty() ? "unsaved changes" : "";
+}
+
+function setStatus(text, cls) {
+    const s = el("ce-status");
+    s.textContent = text;
+    s.className = cls || "";
+}
+
+async function loadContainerList() {
+    const res  = await fetch("/api/v1/tests");
+    const body = await res.json();
+    const tests = (body.data && body.data.tests) || [];
+
+    const seen = new Map();
+    tests.forEach(t => {
+        if (t.container_id && !seen.has(t.container_id)) {
+            seen.set(t.container_id, t.group_label || t.display_name || t.container_id);
+        }
+    });
+
+    const select = el("ce-container");
+    select.innerHTML = "";
+    Array.from(seen.entries())
+        .sort((a, b) => a[1].localeCompare(b[1]))
+        .forEach(([cid, label]) => {
+            const opt = document.createElement("option");
+            opt.value = cid;
+            opt.textContent = `${label}  —  ${cid}`;
+            select.appendChild(opt);
+        });
+
+    if (INITIAL_CONTAINER && seen.has(INITIAL_CONTAINER)) {
+        select.value = INITIAL_CONTAINER;
+    }
+    return select.value;
+}
+
+async function loadContainer(cid) {
+    if (!cid) return;
+    current = cid;
+    setStatus("Loading...");
+    try {
+        const res  = await fetch(`/api/v1/containers/${encodeURIComponent(cid)}/parent`);
+        const body = await res.json();
+        if (!res.ok) {
+            setStatus(body.error ? body.error.message : "Could not load container", "error");
+            return;
+        }
+        const data   = body.data;
+        const parent = data.parent || {};
+
+        saved = {
+            view:             data.view,
+            description:      parent.description || "",
+            batch_run_all:    !!parent.batch_run_all,
+            batch_run_failed: !!parent.batch_run_failed,
+            batch_run_tools:  !!parent.batch_run_tools,
+            build_tracker:    !!parent.build_tracker,
+            ab_testing:       !!parent.ab_testing,
+        };
+        setForm(saved);
+
+        el("ce-identity").innerHTML =
+            `<strong>name</strong> ${parent.name || "?"}<br>` +
+            `<strong>archtype</strong> ${parent.archtype || "?"} &nbsp; ` +
+            `<strong>platform</strong> ${parent.platform || "?"}<br>` +
+            `<strong>children</strong> ${(data.children || []).length}`;
+        el("ce-stub").textContent = data.stub || "?";
+
+        computed = data.computed_keys || [];
+        el("ce-computed").style.display = computed.length ? "" : "none";
+        el("ce-computed-list").textContent = computed.join(", ");
+        // A computed key can't be written back, so don't offer an input that
+        // silently does nothing on save.
+        el("ce-description").disabled = computed.includes("description");
+        el("ce-view").disabled        = computed.includes("view");
+        el("ce-batch-all").disabled   = computed.includes("batch_run_all");
+        el("ce-batch-failed").disabled = computed.includes("batch_run_failed");
+        el("ce-batch-tools").disabled = computed.includes("batch_run_tools");
+        el("ce-build-tracker").disabled = computed.includes("build_tracker");
+        el("ce-ab-testing").disabled  = computed.includes("ab_testing");
+
+        setStatus("");
+        refreshPreview();
+    } catch (e) {
+        console.error(e);
+        setStatus("Could not load container", "error");
+    }
+}
+
+async function save() {
+    if (!current) return;
+    const btn = el("ce-save");
+    btn.disabled = true;
+    setStatus("Saving...");
+    try {
+        // A computed key is read-only: sending it back unchanged would still
+        // be refused (rightly -- the write would freeze the expression), and
+        // that refusal would block saving the keys that ARE editable.
+        const payload = formValues();
+        computed.forEach(k => delete payload[k]);
+
+        const res = await fetch(`/api/v1/containers/${encodeURIComponent(current)}/parent`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!res.ok) {
+            setStatus(body.error ? body.error.message : "Save failed", "error");
+            return;
+        }
+        setStatus("Saved", "saved");
+        await loadContainer(current);
+    } catch (e) {
+        console.error(e);
+        setStatus("Save failed", "error");
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+    const cid = await loadContainerList();
+    el("ce-container").addEventListener("change", e => loadContainer(e.target.value));
+    el("ce-view").addEventListener("change", refreshPreview);
+    ["ce-description", "ce-batch-all", "ce-batch-failed", "ce-batch-tools",
+     "ce-build-tracker", "ce-ab-testing"].forEach(id => {
+        el(id).addEventListener("input", () => {
+            el("ce-dirty").textContent = isDirty() ? "unsaved changes" : "";
+        });
+        el(id).addEventListener("change", () => {
+            el("ce-dirty").textContent = isDirty() ? "unsaved changes" : "";
+        });
+    });
+    el("ce-save").addEventListener("click", save);
+    el("ce-revert").addEventListener("click", () => {
+        if (saved) { setForm(saved); refreshPreview(); setStatus(""); }
+    });
+    await loadContainer(cid);
+});
+</script>
+{% endblock %}

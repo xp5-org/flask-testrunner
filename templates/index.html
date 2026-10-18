@@ -7,8 +7,7 @@
 
 <style>
     /* Control height via padding */
-    #most-recent-table td, 
-    #summaries-table td, 
+    #most-recent-table td,
 .test-table {
     width: 100%;
     table-layout: auto;
@@ -64,6 +63,8 @@ td:last-child {
     </button>
 </p>
 
+{% include "_step_matrix_widget.html" %}
+
 <h3>Filter by System</h3>
 <select id="system-filter">
     <option value="all">All</option>
@@ -89,10 +90,24 @@ document.addEventListener("DOMContentLoaded", async () => {
         let html = "";
 
         if (failedTests.length > 0) {
-            const uniqueTests = [...new Set(failedTests)];
-            const items = uniqueTests.map(modname => {
+            const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({
+                "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+            }[c]));
+            const seen = new Set();
+            const uniqueTests = failedTests.filter(t => {
+                const modname = t && t.module ? t.module : t;
+                if (seen.has(modname)) return false;
+                seen.add(modname);
+                return true;
+            });
+            const items = uniqueTests.map(t => {
+                const modname = t && t.module ? t.module : t;
+                const error = t && t.error ? t.error : null;
                 const path = "sourcedir/" + modname.split(".").join("/") + ".py";
-                return `<li>${modname} <code>(${path})</code></li>`;
+                const errorLine = error
+                    ? `<br><span style="font-size: 0.9em;">${escapeHtml(error)}</span>`
+                    : "";
+                return `<li>${escapeHtml(modname)} <code>(${escapeHtml(path)})</code>${errorLine}</li>`;
             }).join("");
             html += `<div style="color: red; margin-top: 8px;">
                         <strong>Failed to load:</strong>
@@ -124,26 +139,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         <tr>
             <td>{{ step.step_name }}</td>
             <td>{{ step.duration }}</td>
-            <td class="{{ 'green' if step.status == 'PASS' else ('red' if step.status == 'FAIL' else 'gray') }}">{{ step.status }}</td>
+            <td class="{{ 'green' if step.status == 'PASS' else ('red' if step.status == 'FAIL' else ('warn' if step.status == 'WARN' else 'gray')) }}">{{ step.status }}</td>
         </tr>
     {% endfor %}
 </table>
 {% endif %}
-
-<h2>Summaries</h2>
-<table id="summaries-table">
-    <tr><th>Report</th><th>Duration</th><th>Timestamp</th><th>Status</th></tr>
-    {% for report, duration, status, timestamp, test_id in summaries %}
-    <tr>
-        <td><a href="{{ url_for('view_report', filepath=report) }}">{{ report }}</a></td>
-        <td>{{ duration }}</td>
-        <td>{{ timestamp }}</td>
-        <td class="{{ 'green' if status.upper() == 'PASS' else ('red' if status.upper() == 'FAIL' else 'gray') }}">
-            {{ status }}
-        </td>
-    </tr>
-    {% endfor %}
-</table>
 
 <script>
 const bgcolor1 = "#f5f5f5";
@@ -281,6 +281,7 @@ Object.values(grouped).forEach(group => {
     }))).map(v => {
         let cls = "gray";
         if (v.status === "PASS") cls = "green";
+        if (v.status === "WARN") cls = "warn";
         if (v.status === "FAIL") cls = "red";
 
         return `<button class="${cls}" onclick="startTest('${v.id}', '${t.display_name}', '${v.variant}')">${v.variant}</button>`;
@@ -312,7 +313,7 @@ const updateStriping = (rows) => {
         // Alternate button colors to match row striping
         const buttons = row.querySelectorAll(".buttons-cell button");
         buttons.forEach((btn, j) => {
-    if (btn.classList.contains("green") || btn.classList.contains("red")) {
+    if (btn.classList.contains("green") || btn.classList.contains("red") || btn.classList.contains("warn")) {
         return;
     }
 
@@ -328,7 +329,7 @@ const updateStriping = (rows) => {
         updateStriping(rows);
     });
 
-    document.querySelectorAll("#most-recent-table, #summaries-table").forEach(tbl => {
+    document.querySelectorAll("#most-recent-table").forEach(tbl => {
         const rows = Array.from(tbl.querySelectorAll("tr")).slice(1);
         updateStriping(rows);
     });

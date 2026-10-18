@@ -4,6 +4,26 @@
 
 
 <style>
+/* The independently-scrollable panes below only work if something actually
+   constrains the page to the viewport height -- otherwise every flex child's
+   overflow:auto is moot because it just grows to fit its content and the
+   whole document scrolls as one. base.html's shared body has no fixed
+   height (padding:20px, height:auto), so pin it here, scoped to this page
+   only since these rules live in this template, not in the shared stylesheet. */
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+body {
+    display: flex;
+    flex-direction: column;
+}
+#nav {
+    flex-shrink: 0;
+}
+
 .step {
     padding: 10px;
     margin: 5px 0;
@@ -108,16 +128,16 @@
     color: white;
 }
 
-/* ── Step param signature check (mirrors clonetool) ── */
-#sig-panel {
+/* ── Disk assembly summary ── */
+#disk-assembly-panel {
     border: 1px solid #eee;
     border-radius: 4px;
     overflow: hidden;
     font-family: monospace;
     font-size: 0.8em;
 }
-.sig-loading { padding: 10px 12px; color: #888; }
-.sig-step-head {
+.da-loading { padding: 10px 12px; color: #888; }
+.da-step-head {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -125,97 +145,66 @@
     border-bottom: 1px solid #eee;
     background: #fafafa;
 }
-.sig-step-head .sh-idx { color: #888; flex-shrink: 0; }
-.sig-step-head .sh-name { flex: 1; }
-.sig-step-head .sh-ok { color: #28a745; }
-.sig-step-head .sh-err { color: #dc3545; }
-.sig-issue-row {
+.da-step-head .da-idx { color: #888; flex-shrink: 0; }
+.da-step-head .da-name { flex: 1; }
+.da-kv-row {
     display: flex;
     align-items: baseline;
     gap: 8px;
-    padding: 6px 12px 6px 28px;
+    padding: 4px 12px 4px 28px;
     border-bottom: 1px solid #f5f5f5;
     flex-wrap: wrap;
 }
-.sig-issue-row .si-icon { flex-shrink: 0; }
-.sig-issue-row .si-key { font-weight: bold; flex-shrink: 0; }
-.sig-issue-row .si-msg { color: #555; }
-.sig-val-detail {
-    flex-basis: 100%;
-    padding-left: 18px;
-    color: #888;
-    word-break: break-all;
-}
-.sig-val-detail .svd-raw { color: #dc3545; text-decoration: line-through; opacity: 0.8; }
-.sig-val-detail .svd-arrow { color: #aaa; }
-.sig-val-detail .svd-res { color: #333; }
-.sig-fix-row {
-    flex-basis: 100%;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 0 2px 18px;
-    flex-wrap: wrap;
-}
-.sig-fix-row .sf-label { color: #888; }
-.sig-fix-row select, .sig-fix-row input[type="text"] {
-    font-family: monospace;
-    font-size: 0.95em;
-    padding: 3px 6px;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-}
-.sig-fix-row input[type="text"] { flex: 1; min-width: 160px; }
-
-.step-fixes-panel {
-    margin-bottom: 10px;
-    border: 1px solid #28a745;
-    border-radius: 4px;
-    background: #f0faf4;
-    overflow: hidden;
-    font-family: monospace;
-    font-size: 0.8em;
-}
-.step-fixes-title {
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-size: 0.85em;
-    color: #28a745;
-    padding: 6px 12px;
-    border-bottom: 1px solid #28a745;
-}
-.step-fix-row {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 5px 12px;
-    border-bottom: 1px solid #eee;
-}
-.step-fix-row:last-child { border-bottom: none; }
-.step-fix-row .sf-step { color: #888; flex-shrink: 0; }
-.step-fix-row .sf-auto {
-    font-size: 0.85em;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: #007bff;
-    border: 1px solid #007bff;
-    border-radius: 3px;
-    padding: 0 4px;
-    margin-left: 4px;
-}
-.step-fix-row .sf-undo {
-    margin-left: auto;
-    color: #dc3545;
-    cursor: pointer;
-    flex-shrink: 0;
-}
-.step-fix-row .sf-undo:hover { text-decoration: underline; }
-
+.da-kv-row .da-key { font-weight: bold; flex-shrink: 0; color: #555; }
+.da-kv-row .da-val { color: #333; word-break: break-all; }
 
 </style>
 
 
-    <div style="flex:1; display:flex; flex-direction:row; overflow:hidden;">
+    <!-- Dual-mode bar: Offline edit (the .py / the draft) vs Live run (a run of
+         this test is up). Driven by static/livebuilder.js. -->
+    <div id="lv-modebar">
+        <div class="lv-seg">
+            <button id="lv-btn-offline" class="on" onclick="Live.setMode(false)">Offline edit</button>
+            <button id="lv-btn-live" onclick="Live.setMode(true)" disabled title="no run of this test is live">Live run</button>
+        </div>
+        <span class="lv-lbl">Active version:</span>
+        <select id="lv-version" onchange="Live.chooseVersion(this.value)" disabled>
+            <option value="lkg">Last-known-good (.py)</option>
+        </select>
+        <select id="lv-revisions" onchange="Live.revertTo(this.value)" disabled title="draft revision history">
+            <option value="">Revisions</option>
+        </select>
+        <button id="lv-compare" onclick="Live.compare()" disabled>Compare</button>
+        <button id="lv-promote" onclick="Live.promote()" disabled title="write the draft into the .py">Promote draft</button>
+        <button id="lv-discard" onclick="Live.discard()" disabled>Discard draft</button>
+        <span id="lv-draft-badge" class="lv-badge" style="display:none"></span>
+        <span style="flex:1"></span>
+        <span class="lv-lbl">mode</span>
+        <select id="lv-run-mode"><option value="auto">auto</option><option value="step">single-step</option></select>
+        <span class="lv-lbl">on fault</span>
+        <select id="lv-run-fault"><option value="">(test default)</option><option value="abort">abort</option><option value="suspend">suspend</option><option value="step">step</option></select>
+        <span class="lv-lbl">suspend timeout</span>
+        <input id="lv-run-timeout" type="number" min="0" step="5" placeholder="min" style="width:56px">
+        <button id="lv-run" class="lv-go" onclick="Live.startRun()">&#9654; Run</button>
+    </div>
+    <div id="lv-ctl" style="display:none">
+        <span id="lv-state" class="lv-state"></span>
+        <button data-cmd="resume" class="lv-go">&#9654;&#9654; Resume</button>
+        <button data-cmd="step">Step</button>
+        <button data-cmd="retry">Retry</button>
+        <button data-cmd="run_to" title="run until the selected pending step">Run to selected</button>
+        <button data-cmd="pause">Pause</button>
+        <button data-cmd="stop" class="lv-stop" title="skip the rest, run teardown steps">Stop</button>
+        <button data-cmd="abandon" title="skip everything, leave instances up">Abandon</button>
+        <span style="flex:1"></span>
+        <span id="lv-timer" class="lv-timer"></span>
+        <button data-timeout="15">+15m</button><button data-timeout="60">+1h</button><button data-timeout="0">&#8734;</button>
+    </div>
+    <div id="lv-faultline" style="display:none"></div>
+    <div id="lv-warnline" style="display:none"></div>
+
+    <div style="flex:1; min-height:0; display:flex; flex-direction:row; overflow:hidden;">
 
         <!-- Timeline sidebar -->
         <div id="timeline" style="width:350px; border-right:1px solid #ccc; position:relative; padding:20px 10px 20px 60px; overflow-y:auto; background:#f4f4f4;">
@@ -225,12 +214,43 @@
                 <button id="view-detail-btn" onclick="viewTestDetail()" disabled
                         style="background:#6c757d;color:white;border:none;border-radius:4px;padding:6px 10px;">View Test Details</button>
             </div>
+            <div id="plan-bar" style="display:none; margin-bottom:10px; padding:6px 8px;
+                 border:1px solid #cfd8e3; border-radius:4px; background:#eef3f9; font-size:0.72em;">
+                <div id="plan-bar-summary" style="color:#33506e;"></div>
+                <div style="display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; align-items:center;">
+                    <span style="color:#7a8ba0;">promote</span>
+                    <input id="promote-from" type="number" min="1" style="width:44px;" title="first entry">
+                    <span style="color:#7a8ba0;">to</span>
+                    <input id="promote-to" type="number" min="1" style="width:44px;" title="last entry">
+                    <input id="promote-id" type="text" placeholder="template_id" style="width:96px;">
+                    <button onclick="promoteRange()" style="padding:2px 8px;">Save as template</button>
+                </div>
+            </div>
+            <div id="plan-edit-bar" style="display:none; margin-bottom:10px; padding:6px 8px;
+                 border:1px solid #b9670a; border-radius:4px; background:#fff4e5; font-size:0.72em;">
+                <div id="plan-edit-summary" style="color:#7a4a08;"></div>
+                <div id="plan-edit-locate" style="display:none; margin-top:6px; gap:6px;
+                     flex-wrap:wrap; align-items:center;">
+                    <button onclick="openFullExpansion()" style="padding:2px 8px;">
+                        Full expansion ↗</button>
+                    <span style="color:#7a4a08;">every cell's steps, numbered as the runner
+                        and the report number them — and where a pause is set</span>
+                </div>
+                <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+                    <button onclick="savePlanSteps()"
+                            style="background:#b9670a;color:#fff;border:none;border-radius:3px;padding:3px 10px;">
+                        Save to __testplan__.py</button>
+                    <button onclick="cancelPlanEdit()" style="padding:3px 10px;">Cancel</button>
+                </div>
+            </div>
             <div style="font-size:0.7em; color:#888; margin-bottom:4px;">Pause on</div>
             <div id="steps"></div>
         </div>
 
+        <!-- Right column: step params (top) over the live instance viewer (bottom) -->
+        <div id="lv-rightcol">
         <!-- Builder main area -->
-        <div id="builder" style="flex:1; display:flex; flex-direction:column; background:white; overflow-y:auto; overflow-x:hidden;">
+        <div id="builder" style="flex:1; min-height:0; display:flex; flex-direction:column; background:white; overflow-y:auto; overflow-x:hidden;">
 
             <!-- Controls at top of builder -->
 <div id="controls" style="flex-shrink:0; padding:20px; border-bottom:1px solid #eee; display:flex; flex-direction:column; gap:10px;">
@@ -299,7 +319,14 @@
 
                     <div id="param-right" style="display:flex; flex-direction:column;">
 
-                        <label><strong>Parameters:</strong></label>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label><strong>Parameters:</strong></label>
+                            <span id="lv-ocr-bar" style="display:none;">
+                                <button onclick="Live.previewOcr()" title="one pass of this step's OCR against the live instance, using the values below (unsaved edits included)">Preview OCR</button>
+                                <span id="lv-ocr-bar-note" style="font-size:0.8em; color:#888;"></span>
+                            </span>
+                            <span id="lv-edit-note" style="font-size:0.8em; color:#7b3fa0;"></span>
+                        </div>
                         <div id="driver-hint" style="display:none; margin-bottom:8px; border:1px solid #c3e6cb; border-radius:4px; background:#f0faf4; font-family:monospace; font-size:0.8em; overflow:hidden;">
                             <div style="padding:5px 10px; background:#d4edda; color:#155724; font-size:0.75em; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">
                                 🔍 Driver files found in src/
@@ -340,14 +367,7 @@
                         <div id="tags-status" style="font-size:0.8em; color:#888; min-height:1em;"></div>
                     </div>
                 </div>
-<div id="step-fixes" style="display:none; margin-top:10px;"></div>
-<div style="margin-top:10px;">
-    <label><strong>Step param check:</strong></label>
-    <div id="sig-panel" style="margin-top:6px;">
-        <div class="sig-loading">Select a source test to check step params…</div>
-    </div>
-</div>
-                <fieldset style="margin-top:12px; border:1px solid #ccc; border-radius:4px; padding:8px 12px;">
+                <!-- <fieldset style="margin-top:12px; border:1px solid #ccc; border-radius:4px; padding:8px 12px;">
                     <legend style="font-size:0.9em;">Disk image tools (target: {projbasedir}{projdir}/&lt;image&gt;)</legend>
                     <div>
                         <label>Size (MB): <input id="mkdisk-size" type="number" min="1" placeholder="blank=copy" style="width:90px;"></label>
@@ -365,7 +385,7 @@
                     <div style="font-size:0.8em;color:#888;margin-top:4px;">
                         Clone with no size = exact copy. Clone with a bigger size grows it: a <b>bootable DOS disk is rebuilt bootable</b> at the new size (system files + all data carried over); a plain data disk keeps its files (not bootable). "Create blank FAT" makes an empty data disk with a src/ dir.
                     </div>
-                </fieldset>
+                </fieldset> -->
                 <!-- <label style="margin-top:10px;"><strong>JSON Output:</strong></label>
                 <pre id="output" style="flex:1; background:#222; color:#adff2f; padding:15px; border-radius:4px; overflow:auto; font-family:monospace; margin:0;">{}</pre> -->
 
@@ -389,10 +409,10 @@
 
     <div id="config-inventory" style="flex:1; display:flex; flex-direction:column; border:1px solid #eee; border-radius:4px; overflow:auto;">
         <div class="spreadsheet">
-            <div class="row section-head"><div class="cell" colspan="2">Disk Inventory Check</div></div>
+            <div class="row section-head"><div class="cell" colspan="2">Disk Assembly</div></div>
             <div class="row">
-                <div class="cell" id="file-check-status" style="padding: 10px;">
-                    <div style="color: #999;">Waiting for selection...</div>
+                <div class="cell" id="disk-assembly-panel" style="padding: 10px;">
+                    <div class="da-loading">Waiting for selection...</div>
                 </div>
             </div>
         </div>
@@ -432,6 +452,59 @@
 </style>
             </div>
         </div>
+        <div id="lv-split" title="drag to resize"></div>
+        <div id="lv-pane">
+            <div id="lv-pane-head">
+                <div id="lv-tabs"></div>
+                <span id="lv-view-status"></span>
+                <span style="flex:1"></span>
+                <button onclick="Live.refreshShot(true)" title="take a screenshot now">&#8635; Refresh</button>
+            </div>
+            <div id="lv-pane-body">
+                <div id="lv-screen">
+                    <div id="lv-imgwrap">
+                        <img id="lv-img" alt="">
+                        <div id="lv-crop"></div>
+                        <div id="lv-crop-draw"></div>
+                    </div>
+                    <div id="lv-noimg">No live instance from this test.</div>
+                </div>
+                <div id="lv-side">
+                    <div id="lv-ocr" style="display:none">
+                        <div class="lv-sidehead">OCR preview <span id="lv-ocr-verdict"></span></div>
+                        <pre id="lv-ocr-text"></pre>
+                        <div id="lv-ocr-meta"></div>
+                    </div>
+                    <div id="lv-keys">
+                        <div class="lv-sidehead">Send to guest <span id="lv-keys-kind"></span></div>
+                        <textarea id="lv-keys-text" rows="2" placeholder="text to type"></textarea>
+                        <div id="lv-keys-chips"></div>
+                        <div class="lv-kb">
+                            <button data-k="Return">Return</button><button data-k="Esc">Esc</button>
+                            <button data-k="Tab">Tab</button><button data-k="BackSpace">Bksp</button>
+                            <button data-k="Up">&#8593;</button><button data-k="Down">&#8595;</button>
+                            <button data-k="Left">&#8592;</button><button data-k="Right">&#8594;</button>
+                            <button data-k="F1">F1</button><button data-k="F2">F2</button>
+                            <button data-k="F3">F3</button><button data-k="F10">F10</button>
+                            <button data-k="space">Space</button>
+                        </div>
+                        <label><input type="checkbox" id="lv-keys-shot" checked> screenshot</label>
+                        <label><input type="checkbox" id="lv-keys-record"> record as step</label>
+                        <div style="display:flex; gap:6px; margin-top:4px;">
+                            <button id="lv-keys-send" class="lv-go" onclick="Live.sendKeys()">Send</button>
+                            <button onclick="Live.clearKeys()">Clear</button>
+                        </div>
+                        <div id="lv-keys-status"></div>
+                    </div>
+                    <pre id="lv-tty" style="display:none"></pre>
+                    <div id="lv-steplog" style="display:none">
+                        <div class="lv-sidehead">Step log <span id="lv-steplog-name" style="font-weight:400"></span></div>
+                        <pre id="lv-steplog-text"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
     </div>
 
 
@@ -447,25 +520,25 @@ const State = {
     currentConfig: {},
     injectedKeys: new Set(),
 
-    // Step param validation (mirrors clonetool's Step 4 mechanism)
-    stepParamFixes:  {},   // { [stepIndex]: { [oldKey]: newKey | '' } }
-    stepValueFixes:  {},   // { [stepIndex]: { [key]: newValue } }
-    stepActionFixes: {},   // { [stepIndex]: newActionName }
-    autoFixedParams:     new Set(),  // "stepIndex:oldKey"
-    suppressedAutoFixes: new Set(),  // "stepIndex:oldKey"
-    sigErrors: false,
-    lastDriverScan: null   // cached result from most recent /api/scan_drivers call
-};
+    lastDriverScan: null,  // cached result from most recent /api/scan_drivers call
 
-// Known legacy -> current dispatch-arg renames for step params.
-// Mirrors KNOWN_STEP_PARAM_FIXES in cloneproj.html / repair_config.py
-// so the same auto-repair applies whether a test is being cloned or
-// hand-edited here. `null` means "drop the param".
-const KNOWN_STEP_PARAM_FIXES = {
-    test_compiletheprogram: {
-        d64_drive8_file: 'd64_path',
-        d64_file:        null,
-    },
+    // Plan view. State.steps stays the ON-DISK list -- reference entries and
+    // all -- because that is what Save & Sync writes back. The expansion is
+    // kept beside it for display only: the timeline has to be able to say
+    // "this band is steps 13-24", since those are the numbers the runner and
+    // the report use, and they are not the entry numbers.
+    expanded: [],          // steps as the runner will see them
+    plan: null,            // container's templates/matrices/machines
+    hasReferences: false,
+    openBands: new Set(),  // entry indices whose expansion is unfolded
+    modal: null,           // {kind, index, draft} while the overlay is open
+
+    containerId: null,     // container the loaded test belongs to
+    // Set while the step editor is pointed at a TEMPLATE's own steps instead
+    // of a testlist's. State.steps then holds the template's steps and Save
+    // writes them to the container's __testplan__.py -- reaching every
+    // testlist that uses it, which is the difference from Flatten.
+    planEdit: null
 };
 
 const DOM = {
@@ -480,9 +553,7 @@ const DOM = {
     systemFilter: document.getElementById('system-filter'),
 //    output: document.getElementById("output"),
     stepsContainer: document.getElementById("steps"),
-    statusDiv: document.getElementById('file-check-status'),
-    sigPanel: document.getElementById('sig-panel'),
-    stepFixes: document.getElementById('step-fixes'),
+    diskAssemblyPanel: document.getElementById('disk-assembly-panel'),
     driverHint: document.getElementById('driver-hint'),
     driverHintBody: document.getElementById('driver-hint-body'),
     showAllActions: document.getElementById('show-all-actions'),
@@ -691,7 +762,7 @@ async function fetchBuildConfig(testModule) {
             State.currentConfig = res.data.config;
             renderConfigEditor(res.data.config);
             injectMissingParamKeys();  // <-- add this
-            verifyDisk();
+            renderDiskAssembly();
         }
     } catch (e) {
         console.error("Config load error:", e);
@@ -1123,17 +1194,20 @@ function updateFields() {
     renderDescription('');
     renderTags([]);
 
-    // Reset step param validation state for the newly selected test
-    State.stepParamFixes  = {};
-    State.stepValueFixes  = {};
-    State.stepActionFixes = {};
-    State.autoFixedParams     = new Set();
-    State.suppressedAutoFixes = new Set();
-
+    State.openBands = new Set();
+    // Selecting a different test abandons a template edit -- the steps on
+    // screen belong to the plan, not to the test being loaded.
+    State.planEdit = null;
     const stepsPromise = fetch(`/api/v1/tests/${slug}/steps`)
         .then(r => r.json())
         .then(data => {
-            State.steps = data.data.steps;
+            State.steps         = data.data.steps;
+            State.expanded      = data.data.steps_expanded || data.data.steps;
+            State.plan          = data.data.plan || null;
+            State.hasReferences = !!data.data.has_references;
+            if ((data.data.expansion_notes || []).length) {
+                console.warn("plan expansion notes:", data.data.expansion_notes);
+            }
             State.selectedIndex = null;
             render();
         });
@@ -1141,12 +1215,13 @@ function updateFields() {
     const configPromise = fetch(`/api/v1/tests/${encodeURIComponent(slug)}`)
         .then(r => r.json())
         .then(res => {
+            if (res.data) State.containerId = res.data.container_id || null;
             if (res.data && res.data.config) {
                 State.currentConfig = res.data.config;
                 renderDescription(res.data.config.description);
                 renderTags(res.data.config.tags);
                 renderConfigEditor(res.data.config);
-                verifyDisk();
+                renderDiskAssembly();
 
                 // Apply step-scoped repairs from repair_config back into
                 // State.steps so that sendSteps() commits the corrected params
@@ -1194,9 +1269,9 @@ function updateFields() {
         });
 
     // Only inject missing keys after BOTH have finished
-    Promise.all([stepsPromise, configPromise]).then(() => {
+    return Promise.all([stepsPromise, configPromise]).then(() => {
         injectMissingParamKeys();
-        runSigCheck();
+        renderDiskAssembly();
         // Pre-scan drivers so lastDriverScan is populated for param suggestions
         // regardless of which action is currently selected
         scanDrivers();
@@ -1209,6 +1284,10 @@ function addStep() {
         action: State.currentSelectedAction, param: getParams(), subaction: "",
         description: getStepDescription(),
     };
+    // A step added to a template needs an id: that is how a use site's
+    // override or skip addresses it, and positional addressing would shift
+    // under every later insert.
+    if (State.planEdit) step.id = nextPlanStepId();
     if (State.selectedIndex === null) State.steps.push(step);
     else State.steps.splice(State.selectedIndex + 1, 0, step);
     renderStepDescription('');
@@ -1217,13 +1296,18 @@ function addStep() {
 
 function updateStep() {
     if (State.selectedIndex === null) return;
-    // pause_on is toggled by its own checkbox, independent of the action/param
-    // editor -- carry it over rather than letting a normal edit silently
-    // clear it.
-    const pauseOn = State.steps[State.selectedIndex].pause_on;
+    // Only the keys this form owns are rewritten; everything else the step
+    // already carried is kept. pause_on has its own checkbox, title/phase/
+    // group/subgroup have no widget here at all, and a template step's
+    // id/overridable are what its callers' overrides address -- rebuilding
+    // the step from the form alone would silently drop all of them.
+    const prev = State.steps[State.selectedIndex] || {};
     State.steps[State.selectedIndex] = {
-        action: State.currentSelectedAction, param: getParams(), subaction: "",
-        description: getStepDescription(), pause_on: pauseOn,
+        ...prev,
+        action: State.currentSelectedAction,
+        param: getParams(),
+        subaction: "",
+        description: getStepDescription(),
     };
     render();
 }
@@ -1240,13 +1324,20 @@ function renderStepDescription(text) {
 // then pushes steps + build config to the server. Replaces the old two-click
 // "Update Selected" -> "Sync to Flask" flow.
 function saveAndSync() {
+    // In template-edit mode the steps on screen belong to the container's
+    // plan, not to the selected testlist -- writing them to the testlist
+    // would copy the template into one test and detach it from the rest.
+    if (State.planEdit) { savePlanSteps(); return; }
     updateStep();
     sendSteps();
-    verifyDisk();
+    renderDiskAssembly();
 }
 window.saveAndSync = saveAndSync;
 
 function selectStep(index) {
+    // A reference entry has no action and no param of its own -- what is
+    // editable about it is its overrides, which live in their own overlay.
+    if (isPlanRef(State.steps[index])) { openPlanEditor(index); return; }
     State.selectedIndex = (State.selectedIndex === index) ? null : index;
     if (State.selectedIndex !== null) {
         const s = State.steps[State.selectedIndex];
@@ -1374,372 +1465,11 @@ function applyDriverPreset(slot, pathToken, label) {
 
 window.applyDriverPreset = applyDriverPreset;
 
-/* --- Step param validation (mirrors clonetool's mechanism) --- */
-
-function getResolvedVars() {
-    // Best-effort var map for resolving {tokens} in step params — same
-    // approach as clonetool: start from currentConfig, then resolve any
-    // top-level template strings into themselves.
-    const vars = { ...State.currentConfig };
-    const TOKEN_RE = /\{[^}]+\}/;
-    const resolveStr = (tmpl, map, passes = 6) => {
-        let s = String(tmpl);
-        for (let i = 0; i < passes; i++) {
-            const prev = s;
-            s = s.replace(/\{([^}]+)\}/g, (m, k) => (k in map) ? String(map[k]) : m);
-            if (s === prev) break;
-        }
-        return s;
-    };
-    Object.keys(vars).forEach(k => {
-        if (typeof vars[k] === 'string' && TOKEN_RE.test(vars[k])) {
-            vars[k] = resolveStr(vars[k], vars);
-        }
-    });
-    return vars;
-}
-
-function runSigCheck(skipAutoFix = false) {
-    if (!State.steps || !State.steps.length) {
-        DOM.sigPanel.innerHTML = '<div class="sig-loading">No steps to check.</div>';
-        renderStepFixesPanel();
-        return;
-    }
-
-    DOM.sigPanel.innerHTML = '<div class="sig-loading">Checking step params against dispatch signatures…</div>';
-    State.sigErrors = false;
-
-    const vars = getResolvedVars();
-    const config = { ...State.currentConfig, steps: getFixedSteps() };
-
-    fetch(`/api/v1/tests/${DOM.testListSel.value}/validate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config, resolved_vars: vars }),
-    })
-        .then(r => r.json())
-        .then(res => {
-            if (!res.data) {
-                DOM.sigPanel.innerHTML = `<div class="sig-loading" style="color:#dc3545">
-                    Could not load dispatch: ${escHtml((res.error && res.error.message) || '')}</div>`;
-                State.sigErrors = false;
-                renderStepFixesPanel();
-                return;
-            }
-
-            if (!skipAutoFix && autoApplyKnownFixes(res.data.results)) {
-                runSigCheck(true);
-                return;
-            }
-
-            renderSigPanel(res.data.results);
-            State.sigErrors = res.data.has_errors;
-            renderStepFixesPanel();
-        })
-        .catch(e => {
-            DOM.sigPanel.innerHTML = `<div class="sig-loading" style="color:#888">
-                Sig check unavailable: ${escHtml(String(e))}</div>`;
-            State.sigErrors = false;
-            renderStepFixesPanel();
-        });
-}
-
-function autoApplyKnownFixes(results) {
-    let applied = false;
-    (results || []).forEach(r => {
-        const table = KNOWN_STEP_PARAM_FIXES[r.action];
-        if (!table) return;
-        (r.issues || []).forEach(iss => {
-            if (iss.kind !== 'unknown_param') return;
-            if (!(iss.key in table)) return;
-
-            const tag = `${r.step_index}:${iss.key}`;
-            if (State.suppressedAutoFixes.has(tag)) return;
-            const existing = State.stepParamFixes[r.step_index];
-            if (existing && iss.key in existing) return;
-
-            const newKey = table[iss.key];
-            if (!State.stepParamFixes[r.step_index]) State.stepParamFixes[r.step_index] = {};
-            State.stepParamFixes[r.step_index][iss.key] = (newKey === null) ? '' : newKey;
-            State.autoFixedParams.add(tag);
-            applied = true;
-        });
-    });
-    return applied;
-}
-
-function renderSigPanel(results) {
-    if (!results || results.length === 0) {
-        DOM.sigPanel.innerHTML = '<div class="sig-loading" style="color:#888">No steps to check.</div>';
-        return;
-    }
-    if (results.length === 1 && results[0].step_index === -1) {
-        DOM.sigPanel.innerHTML = `<div class="sig-loading" style="color:#dc3545">
-            Load error: ${escHtml(results[0].issues[0]?.detail || 'unknown')}</div>`;
-        return;
-    }
-
-    const KIND_LABEL = {
-        unknown_param:      'unknown param',
-        unknown_action:     'unknown action',
-        hardcoded_srcpath:  'hardcoded source path',
-        unresolved_token:   'unresolved token',
-        doubled_segment:    'doubled path segment',
-        bare_filename:      'bare filename (no path)',
-        load_error:         'load error',
-    };
-
-    DOM.sigPanel.innerHTML = `<div style="border:1px solid #eee; border-radius:4px; overflow:hidden;">` +
-        results.map(r => {
-            const hasIssues = r.issues && r.issues.length > 0;
-            const statusHtml = !r.found
-                ? `<span class="sh-err">✖ action not found</span>`
-                : hasIssues
-                    ? `<span class="sh-err">✖ ${r.issues.length} issue${r.issues.length !== 1 ? 's' : ''}</span>`
-                    : `<span class="sh-ok">✓ ok</span>`;
-
-            const headHtml = `<div class="sig-step-head">
-                <span class="sh-idx">${r.step_index + 1}</span>
-                <span class="sh-name">${escHtml(r.action)}</span>
-                ${statusHtml}
-            </div>`;
-
-            if (!hasIssues && r.found) return headHtml;
-
-            const issueRows = (r.issues || []).map(iss => {
-                const label = KIND_LABEL[iss.kind] || iss.kind;
-                const sugHtml = iss.suggestion ? ` → <strong>${escHtml(iss.suggestion)}</strong>` : '';
-                const isWarn = iss.kind === 'bare_filename';
-                const rowStyle = isWarn ? 'background:#fdf9ee;' : '';
-                const iconColor = isWarn ? 'color:#b8860b' : 'color:#dc3545';
-                const autoFixed = isWarn
-                    ? ' <span style="color:#28a745;font-style:italic">(auto-cleared on save)</span>' : '';
-
-                let valueHtml = '';
-                if (iss.value && iss.resolved && iss.value !== iss.resolved) {
-                    valueHtml = `<div class="sig-val-detail">
-                        <span class="svd-raw">${escHtml(iss.value)}</span>
-                        <span class="svd-arrow">→</span>
-                        <span class="svd-res">${escHtml(iss.resolved)}</span>
-                    </div>`;
-                } else if (iss.value) {
-                    valueHtml = `<div class="sig-val-detail"><span class="svd-raw">${escHtml(iss.value)}</span></div>`;
-                }
-
-                let fixHtml = '';
-                const stepIdx = r.step_index;
-                if (iss.kind === 'unknown_param') {
-                    const curFix = (State.stepParamFixes[stepIdx] || {})[iss.key];
-                    const opts = ['<option value="">— choose fix —</option>'];
-                    (r.valid_params || []).forEach(p => {
-                        const isSel = curFix !== undefined ? curFix === p : iss.suggestion === p;
-                        opts.push(`<option value="${escHtml(p)}"${isSel ? ' selected' : ''}>rename → ${escHtml(p)}</option>`);
-                    });
-                    opts.push(`<option value="__remove__"${curFix === '' ? ' selected' : ''}>✕ remove this param</option>`);
-                    fixHtml = `<div class="sig-fix-row">
-                        <span class="sf-label">Fix:</span>
-                        <select onchange="applyStepParamFix(${stepIdx}, '${escHtml(iss.key)}', this.value)">
-                            ${opts.join('')}
-                        </select>
-                    </div>`;
-                } else if (iss.kind === 'unknown_action') {
-                    const cur = State.stepActionFixes[stepIdx] !== undefined ? State.stepActionFixes[stepIdx] : (r.action || '');
-                    fixHtml = `<div class="sig-fix-row">
-                        <span class="sf-label">Action:</span>
-                        <input type="text" value="${escHtml(cur)}"
-                            onchange="applyStepActionFix(${stepIdx}, this.value)">
-                    </div>`;
-                } else if (iss.key && (iss.value || iss.resolved || iss.suggestion)) {
-                    const stored = (State.stepValueFixes[stepIdx] || {})[iss.key];
-                    const cur = stored !== undefined ? stored : (iss.suggestion || iss.resolved || iss.value);
-                    fixHtml = `<div class="sig-fix-row">
-                        <span class="sf-label">Set value:</span>
-                        <input type="text" value="${escHtml(cur)}"
-                            onchange="applyStepValueFix(${stepIdx}, '${escHtml(iss.key)}', this.value)">
-                    </div>`;
-                }
-
-                return `<div class="sig-issue-row" style="${rowStyle}">
-                    <span class="si-icon" style="${iconColor}">${isWarn ? '⚠' : '✖'}</span>
-                    <span class="si-key" style="${iconColor}">${escHtml(iss.key || '')}</span>
-                    <span class="si-msg">${escHtml(label)}${sugHtml}${autoFixed}</span>
-                    ${valueHtml}
-                    ${fixHtml}
-                </div>`;
-            }).join('');
-
-            return headHtml + issueRows;
-        }).join('') + `</div>`;
-}
-
-function applyStepParamFix(stepIndex, oldKey, newVal) {
-    if (newVal === '') {
-        if (State.stepParamFixes[stepIndex]) {
-            delete State.stepParamFixes[stepIndex][oldKey];
-            if (Object.keys(State.stepParamFixes[stepIndex]).length === 0) delete State.stepParamFixes[stepIndex];
-        }
-    } else {
-        if (!State.stepParamFixes[stepIndex]) State.stepParamFixes[stepIndex] = {};
-        State.stepParamFixes[stepIndex][oldKey] = (newVal === '__remove__') ? '' : newVal;
-    }
-    runSigCheck();
-}
-
-function applyStepValueFix(stepIndex, key, newVal) {
-    if (!State.stepValueFixes[stepIndex]) State.stepValueFixes[stepIndex] = {};
-    State.stepValueFixes[stepIndex][key] = newVal;
-    runSigCheck();
-}
-
-function applyStepActionFix(stepIndex, newVal) {
-    newVal = (newVal || '').trim();
-    if (newVal) State.stepActionFixes[stepIndex] = newVal;
-    else delete State.stepActionFixes[stepIndex];
-    runSigCheck();
-}
-
-function undoParamFix(stepIndex, oldKey) {
-    const tag = `${stepIndex}:${oldKey}`;
-    if (State.autoFixedParams.has(tag)) {
-        State.autoFixedParams.delete(tag);
-        State.suppressedAutoFixes.add(tag);
-    }
-    if (State.stepParamFixes[stepIndex]) {
-        delete State.stepParamFixes[stepIndex][oldKey];
-        if (Object.keys(State.stepParamFixes[stepIndex]).length === 0) delete State.stepParamFixes[stepIndex];
-    }
-    runSigCheck();
-}
-
-function undoValueFix(stepIndex, key) {
-    if (State.stepValueFixes[stepIndex]) {
-        delete State.stepValueFixes[stepIndex][key];
-        if (Object.keys(State.stepValueFixes[stepIndex]).length === 0) delete State.stepValueFixes[stepIndex];
-    }
-    runSigCheck();
-}
-
-function undoActionFix(stepIndex) {
-    delete State.stepActionFixes[stepIndex];
-    runSigCheck();
-}
-
-// Returns State.steps with all pending fixes applied (deep-cloned) —
-// this is what actually gets committed back into State.steps once the
-// user is happy (see commitStepFixes), and what gets sent for live
-// re-validation while fixes are still pending.
-function getFixedSteps() {
-    if (!State.steps) return State.steps;
-    const steps = JSON.parse(JSON.stringify(State.steps));
-
-    Object.entries(State.stepParamFixes).forEach(([idxStr, fixes]) => {
-        const step = steps[Number(idxStr)];
-        if (!step) return;
-        const param = step.param || (step.param = {});
-        Object.entries(fixes).forEach(([oldKey, newKey]) => {
-            if (!(oldKey in param)) return;
-            const val = param[oldKey];
-            delete param[oldKey];
-            if (newKey) param[newKey] = val;
-        });
-    });
-
-    Object.entries(State.stepValueFixes).forEach(([idxStr, fixes]) => {
-        const step = steps[Number(idxStr)];
-        if (!step) return;
-        const param = step.param || (step.param = {});
-        Object.entries(fixes).forEach(([key, val]) => { param[key] = val; });
-    });
-
-    Object.entries(State.stepActionFixes).forEach(([idxStr, newAction]) => {
-        const step = steps[Number(idxStr)];
-        if (step) step.action = newAction;
-    });
-
-    return steps;
-}
-
-// Folds all pending fixes into State.steps itself (so they persist
-// through render()/sendSteps() without needing a separate payload),
-// then clears the pending-fix state since it's now baked in.
-function commitStepFixes() {
-    State.steps = getFixedSteps();
-    State.stepParamFixes  = {};
-    State.stepValueFixes  = {};
-    State.stepActionFixes = {};
-    State.autoFixedParams = new Set();
-    // Keep suppressedAutoFixes — those are explicit user decisions for
-    // this test that should still hold after a commit.
-    if (State.selectedIndex !== null) {
-        const s = State.steps[State.selectedIndex];
-        if (s) renderParamTable(State.schema[s.action] || {}, s.param);
-    }
-    render();
-}
-
-function renderStepFixesPanel() {
-    const wrap = DOM.stepFixes;
-    const rows = [];
-
-    Object.entries(State.stepParamFixes).forEach(([idx, fixes]) => {
-        Object.entries(fixes).forEach(([oldKey, newKey]) => {
-            const desc = newKey
-                ? `rename <strong>${escHtml(oldKey)}</strong> → <strong>${escHtml(newKey)}</strong>`
-                : `remove <strong>${escHtml(oldKey)}</strong>`;
-            const autoBadge = State.autoFixedParams.has(`${idx}:${oldKey}`)
-                ? ' <span class="sf-auto">auto</span>' : '';
-            rows.push(`<div class="step-fix-row">
-                <span class="sf-step">Step ${Number(idx) + 1}</span>
-                <span>${desc}${autoBadge}</span>
-                <span class="sf-undo" onclick="undoParamFix(${idx}, '${escHtml(oldKey)}')">✕ undo</span>
-            </div>`);
-        });
-    });
-
-    Object.entries(State.stepValueFixes).forEach(([idx, fixes]) => {
-        Object.entries(fixes).forEach(([key, val]) => {
-            rows.push(`<div class="step-fix-row">
-                <span class="sf-step">Step ${Number(idx) + 1}</span>
-                <span>set <strong>${escHtml(key)}</strong> = <strong>${escHtml(val)}</strong></span>
-                <span class="sf-undo" onclick="undoValueFix(${idx}, '${escHtml(key)}')">✕ undo</span>
-            </div>`);
-        });
-    });
-
-    Object.entries(State.stepActionFixes).forEach(([idx, val]) => {
-        rows.push(`<div class="step-fix-row">
-            <span class="sf-step">Step ${Number(idx) + 1}</span>
-            <span>action → <strong>${escHtml(val)}</strong></span>
-            <span class="sf-undo" onclick="undoActionFix(${idx})">✕ undo</span>
-        </div>`);
-    });
-
-    if (rows.length === 0) {
-        wrap.style.display = 'none';
-        wrap.innerHTML = '';
-        return;
-    }
-    wrap.style.display = 'block';
-    wrap.innerHTML = `<div class="step-fixes-panel">
-        <div class="step-fixes-title">✓ Step param fixes — pending<button onclick="commitStepFixes()" style="margin-left:10px;font-size:0.85em;background:#28a745;color:#fff;border:none;border-radius:3px;padding:2px 8px;cursor:pointer;">Apply to steps</button></div>
-        ${rows.join('')}
-    </div>`;
-}
-
 function escHtml(s) {
     return String(s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;')
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-
-window.applyStepParamFix  = applyStepParamFix;
-window.applyStepValueFix  = applyStepValueFix;
-window.applyStepActionFix = applyStepActionFix;
-window.undoParamFix  = undoParamFix;
-window.undoValueFix  = undoValueFix;
-window.undoActionFix = undoActionFix;
-window.commitStepFixes = commitStepFixes;
-
 
 
 function getParams() {
@@ -1762,26 +1492,53 @@ function getParams() {
     return vals;
 }
 
-async function verifyDisk() {
-    try {
-        const r = await fetch(`/api/v1/tests/${DOM.testListSel.value}/dirlist`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(State.currentConfig)
-        });
-        const data = (await r.json()).data;
-        if (!data.exists) {
-            DOM.statusDiv.innerHTML = `<span style="color:red">Folder not found at: ${data.project_root}</span>`;
-            return;
-        }
+// Which step params name a disk/media image or the template it's built
+// from -- used by renderDiskAssembly() below to show how the test's disks
+// get assembled (what template each image starts from, what it flattens or
+// converts into) rather than a raw walk of every file the project dir holds.
+const DISK_ASSEMBLY_KEY_RE = /disk|hdd|floppy|cdrom|dvd|vm_path|vm_template|boot_disk|kernel_path|dtb_path/i;
 
-        let html = `<div><b>Root:</b> <code>${data.project_root}</code></div><ul class="file-list">`;
-        data.files_on_disk.forEach(file => {
-            const isTarget = Object.values(data.resolved_config).some(v => typeof v === 'string' && v.endsWith(file));
-            html += `<li class="file-item ${isTarget ? 'match' : 'no-match'}">${isTarget ? '✓' : '·'} ${file}</li>`;
-        });
-        DOM.statusDiv.innerHTML = html + `</ul>`;
-    } catch (e) { console.error("Verify Error", e); }
+function renderDiskAssembly() {
+    if (!DOM.diskAssemblyPanel) return;
+    if (!State.steps || !State.steps.length) {
+        DOM.diskAssemblyPanel.innerHTML = '<div class="da-loading">No steps to inspect.</div>';
+        return;
+    }
+
+    // Best-effort {token} resolution against the current build config, same
+    // approach used for param suggestions elsewhere in this file.
+    const resolveToken = (tmpl) => {
+        if (!tmpl) return '';
+        let s = String(tmpl);
+        for (let i = 0; i < 6; i++) {
+            const prev = s;
+            s = s.replace(/\{([^}]+)\}/g, (m, k) =>
+                (k in State.currentConfig) ? String(State.currentConfig[k]) : m);
+            if (s === prev) break;
+        }
+        return s;
+    };
+
+    const rows = State.steps.map((step, i) => {
+        if (isPlanRef(step)) return null;
+        const param = step.param || {};
+        const diskKeys = Object.keys(param).filter(k => DISK_ASSEMBLY_KEY_RE.test(k));
+        if (!diskKeys.length) return null;
+
+        const kvHtml = diskKeys.map(k => {
+            const raw = param[k];
+            const resolved = resolveToken(raw);
+            const shown = (resolved !== String(raw)) ? `${escHtml(raw)} → ${escHtml(resolved)}` : escHtml(raw);
+            return `<div class="da-kv-row"><span class="da-key">${escHtml(k)}</span><span class="da-val">${shown}</span></div>`;
+        }).join('');
+
+        return `<div class="da-step-head"><span class="da-idx">${i + 1}</span>` +
+            `<span class="da-name">${escHtml(step.action)}</span></div>${kvHtml}`;
+    }).filter(Boolean);
+
+    DOM.diskAssemblyPanel.innerHTML = rows.length
+        ? rows.join('')
+        : '<div class="da-loading">No disk/template params found in this test\'s steps.</div>';
 }
 
 
@@ -1814,13 +1571,23 @@ function injectMissingParamKeys() {
 function render() {
     DOM.stepsContainer.innerHTML = "";
     DOM.moveTarget.innerHTML = "";
+    renderPlanBar();
+    renderPlanEditBar();
+    const ranges = expandedRanges();
 
     State.steps.forEach((s, i) => {
+        if (isPlanRef(s)) {
+            DOM.stepsContainer.appendChild(renderPlanBand(s, i, ranges[i]));
+            DOM.moveTarget.add(new Option(`${i + 1}. Position ${i + 1}`, i));
+            return;
+        }
         const d = document.createElement("div");
         d.className = `step ${i === State.selectedIndex ? 'selected' : ''}`;
         const noteMark = s.description
             ? `<span title="${escHtml(s.description)}" style="color:#007bff; cursor:help;"> 📝</span>` : '';
-        d.innerHTML = `<div class="dot"></div><span>Step ${i + 1}: ${s.action}</span>${noteMark}`;
+        const rng = ranges[i];
+        const num = (State.hasReferences && rng) ? `${rng[0]}` : `${i + 1}`;
+        d.innerHTML = `<div class="dot"></div><span>Step ${num}: ${s.action}</span>${noteMark}`;
 
         const pauseBox = document.createElement("input");
         pauseBox.type = "checkbox";
@@ -1860,21 +1627,16 @@ function render() {
         ? `Insert at end (${State.steps.length} total)` 
         : `Editing Step ${State.selectedIndex + 1}`;
 
-    runSigCheck();
+    renderDiskAssembly();
     filterActions();
 }
 
 function sendSteps() {
+    if (State.planEdit) return alert(
+        "These steps belong to the container's plan — use "
+        + "\"Save to __testplan__.py\", or Cancel first.");
     const mod = DOM.testListSel.value;
     if (!mod) return alert("Select a source");
-
-    // Fold in any pending step param fixes before syncing, so what gets
-    // saved always matches what passed (or was explicitly left failing)
-    // the step param check.
-    const hasPending = Object.keys(State.stepParamFixes).length
-        || Object.keys(State.stepValueFixes).length
-        || Object.keys(State.stepActionFixes).length;
-    if (hasPending) commitStepFixes();
 
     const normalizedConfig = {};
     Object.keys(State.currentConfig || {}).forEach(key => {
@@ -1988,6 +1750,739 @@ async function cloneDiskImage() {
     }
 }
 
+/* ── Plan-aware editing ──────────────────────────────────────────────────────
+   A testlist may hold reference entries -- {"use": ...} for a step-group
+   template and {"matrix": ...} for a sweep -- that the container's
+   __testplan__.py defines and stepplan.py expands before anything runs.
+
+   The editor keeps editing the ON-DISK list (State.steps): that is what Save
+   & Sync writes, and it is the thing whose meaning a person can reason about.
+   The expansion (State.expanded) is shown alongside, read-only, because the
+   numbers in a report are the expanded ones and a band that claimed to be
+   "step 3" when the report calls it "step 13" would be a trap.
+
+   What IS editable on a reference is its overrides, and only the params the
+   template marked "overridable" -- that list is the template's contract with
+   its callers. Everything else is shown locked, with a Flatten button for
+   when a testlist genuinely needs to stop following the template.
+   ────────────────────────────────────────────────────────────────────────── */
+
+function isPlanRef(entry) {
+    return !!(entry && (entry.use || entry.matrix || (entry.axes && entry.steps)));
+}
+
+function refKind(entry) { return entry.use ? "template" : "matrix"; }
+function refName(entry) { return entry.use || entry.matrix || "inline"; }
+
+/* Which expanded step numbers each on-disk entry produced. Derived from the
+   expansion's own provenance rather than recomputed here, so the editor can
+   never disagree with the runner about where a band starts. */
+function expandedRanges() {
+    const ranges = {};
+    if (!State.hasReferences) {
+        State.steps.forEach((s, i) => { ranges[i] = [i + 1, i + 1]; });
+        return ranges;
+    }
+    let ei = 0;
+    State.steps.forEach((entry, i) => {
+        if (!isPlanRef(entry)) { ei += 1; ranges[i] = [ei, ei]; return; }
+        const start = ei + 1;
+        const name  = refName(entry);
+        while (ei < State.expanded.length) {
+            const o = State.expanded[ei] && State.expanded[ei]._origin;
+            if (!o) break;
+            // Prefer the entry number the expansion stamped on the step over
+            // matching template names: a testlist that uses one template
+            // twice in a row would otherwise fold both uses into the first
+            // band, and every step number shown from here on -- including
+            // "PAUSE_ON at step N" -- would be counted off the wrong start.
+            if (o.entry !== undefined ? o.entry !== i + 1 : o.source !== name) break;
+            ei += 1;
+        }
+        ranges[i] = [start, ei];
+    });
+    return ranges;
+}
+
+function expandedFor(index) {
+    const r = expandedRanges()[index];
+    if (!r) return [];
+    return State.expanded.slice(r[0] - 1, r[1]);
+}
+
+function renderPlanBar() {
+    const bar = document.getElementById("plan-bar");
+    if (!bar) return;
+    // Promoting a range into a template makes no sense while the steps on
+    // screen ARE a template.
+    if (State.planEdit) { bar.style.display = "none"; return; }
+    if (!State.hasReferences && !(State.plan && (Object.keys(State.plan.templates || {}).length
+                                               || Object.keys(State.plan.matrices || {}).length))) {
+        bar.style.display = "none";
+        return;
+    }
+    bar.style.display = "";
+    const t = Object.keys((State.plan || {}).templates || {}).length;
+    const m = Object.keys((State.plan || {}).matrices || {}).length;
+    document.getElementById("plan-bar-summary").innerHTML =
+        `<strong>${State.steps.length}</strong> entries → ` +
+        `<strong>${State.expanded.length}</strong> steps &nbsp;·&nbsp; ` +
+        `container plan: ${t} template${t === 1 ? "" : "s"}, ${m} matri${m === 1 ? "x" : "ces"}`;
+}
+
+function renderPlanBand(entry, index, range) {
+    const kind = refKind(entry);
+    const name = refName(entry);
+    const def  = kind === "template"
+        ? ((State.plan || {}).templates || {})[name]
+        : ((State.plan || {}).matrices  || {})[name];
+    const wrap = document.createElement("div");
+    wrap.className = "plan-band" + (kind === "matrix" ? " matrix" : "");
+
+    const count = range ? (range[1] - range[0] + 1) : 0;
+    // entry.cells is only set once this testlist has locally overridden the
+    // matrix's cells (applyPlanModal); the common case is 0 here and the
+    // real cell count is def.cells's, from the shared plan.
+    const cells = (entry.cells && entry.cells.length) || (def && (def.cells || []).length) || 0;
+    const sub   = kind === "matrix" && cells
+        ? `${cells} cells × ${(def && def.step_count) || "?"} steps`
+        : `${(def && def.step_count) || count} steps`;
+    const label = (def && def.label) || name;
+    const missing = def ? "" : ` <span style="color:#b00;">(not in plan)</span>`;
+
+    const head = document.createElement("div");
+    head.className = "plan-band-head";
+    head.innerHTML =
+        `<span class="plan-band-kind">${kind}</span>` +
+        `<span title="${escHtml(name)}">${escHtml(label)}${missing}</span>` +
+        `<span class="plan-band-range">${range ? `steps ${range[0]}–${range[1]}` : ""}</span>`;
+    wrap.appendChild(head);
+
+    const meta = document.createElement("div");
+    meta.style.cssText = "font-size:0.7em;color:#7a8ba0;margin-top:2px;";
+    meta.textContent = `${name} · ${sub}` +
+        (entry.phase ? ` · phase ${entry.phase}` : "");
+    wrap.appendChild(meta);
+
+    const actions = document.createElement("div");
+    actions.className = "plan-band-actions";
+    const btn = (text, fn, bg) => {
+        const b = document.createElement("button");
+        b.textContent = text;
+        if (bg) b.style.background = bg;
+        b.onclick = (e) => { e.stopPropagation(); fn(); };
+        return b;
+    };
+    actions.appendChild(btn(State.openBands.has(index) ? "▾ steps" : "▸ steps",
+                            () => toggleBand(index), "#6c757d"));
+    actions.appendChild(btn(kind === "matrix" ? "Edit matrix" : "Overrides",
+                            () => openPlanEditor(index)));
+    actions.appendChild(btn("Edit steps", () => editPlanSteps(index), "#0a7b53"));
+    actions.appendChild(btn("Full expansion ↗", () => openFullExpansion(), "#5a6b7c"));
+    actions.appendChild(btn("Flatten", () => flattenRef(index), "#b9670a"));
+    wrap.appendChild(actions);
+
+    // A pause inside a band is one key, inside one cell's override, inside one
+    // entry -- and this row is the only thing on screen standing in for all
+    // 163 steps it produces. Left off, a breakpoint someone set last week is
+    // invisible until a 40-minute run stops dead in the middle of a sweep.
+    const paused = pausedInBand(index, range);
+    if (paused.length) {
+        const note = document.createElement("div");
+        note.className = "plan-band-pause";
+        note.innerHTML = paused.map(p =>
+            `<span title="${escHtml(p.action)}">PAUSE_ON at step <strong>${p.n}</strong>` +
+            (p.where ? ` <span class="plan-band-pause-where">(${escHtml(p.where)})</span>` : "") +
+            `</span>`).join("<br>");
+        wrap.appendChild(note);
+    }
+
+    if (State.openBands.has(index)) {
+        const list = document.createElement("div");
+        list.className = "plan-band-steps";
+        expandedFor(index).forEach((s, k) => {
+            const o = s._origin || {};
+            const n = (range ? range[0] : 1) + k;
+            const over = (o.overridden || []).length
+                ? ` <span class="ovr">±${o.overridden.join(",")}</span>` : "";
+            const where = o.cell ? `${o.cell}/` : "";
+            const pause = pauseFlag(s.pause_on) ? ` <span class="pausetag">PAUSE_ON</span>` : "";
+            list.innerHTML +=
+                `<div>${n}. <span class="plan-locked">${escHtml(where + (o.step_id || o.index))}</span> ` +
+                `${escHtml(s.action)}${over}${pause}</div>`;
+        });
+        wrap.appendChild(list);
+    }
+    return wrap;
+}
+
+/* Same coercion as test_runner._pause_flag: a hand-edited .py may carry the
+   string "true" where the checkbox writes a real bool, and a pause that the
+   runner will honour but the editor draws as off is worse than no marker. */
+function pauseFlag(v) {
+    if (typeof v === "boolean") return v;
+    return ["1", "true", "yes", "on"].includes(String(v).trim().toLowerCase());
+}
+
+/* Which expanded steps of this band carry a pause, numbered as the runner and
+   the report number them. */
+function pausedInBand(index, range) {
+    const out = [];
+    expandedFor(index).forEach((s, k) => {
+        if (!pauseFlag(s.pause_on)) return;
+        const o = s._origin || {};
+        const where = [o.cell, o.step_id || o.index].filter(Boolean).join(" / ");
+        out.push({n: (range ? range[0] : 1) + k, where, action: s.action || ""});
+    });
+    return out;
+}
+
+function toggleBand(index) {
+    if (State.openBands.has(index)) State.openBands.delete(index);
+    else State.openBands.add(index);
+    render();
+}
+
+/* ── the overlay: override table, or the matrix grid ─────────────────────── */
+
+function openPlanEditor(index) {
+    const entry = State.steps[index];
+    if (!isPlanRef(entry)) return;
+    State.modal = {kind: refKind(entry), index,
+                   draft: JSON.parse(JSON.stringify(entry))};
+    document.getElementById("plan-modal").style.display = "";
+    document.getElementById("plan-modal-status").textContent = "";
+    if (State.modal.kind === "matrix") renderMatrixGrid();
+    else renderOverrideTable();
+}
+
+function closePlanModal() {
+    State.modal = null;
+    document.getElementById("plan-modal").style.display = "none";
+}
+
+function planDef(entry) {
+    const name = refName(entry);
+    return entry.use
+        ? (((State.plan || {}).templates || {})[name] || null)
+        : (((State.plan || {}).matrices  || {})[name] || null);
+}
+
+/* The override editor for a {"use": ...} entry: one row per template step,
+   one input per param that step declared overridable. A step that declared
+   none is shown locked -- that is the template author saying "this part is
+   the same everywhere on purpose". */
+function renderOverrideTable() {
+    const {index, draft} = State.modal;
+    const def  = planDef(draft);
+    const name = refName(draft);
+    document.getElementById("plan-modal-title").textContent =
+        `Overrides — ${(def && def.label) || name}`;
+    const body = document.getElementById("plan-modal-body");
+
+    if (!def) {
+        body.innerHTML = `<p style="color:#b00;">Template <code>${escHtml(name)}</code> is not
+            defined in this container's __testplan__.py.</p>`;
+        return;
+    }
+    const steps = expandedFor(index);
+    const over  = draft.override || {};
+    State.modal.cols = [];
+    (def.step_ids || []).forEach((sid, i) => {
+        const key = sid || String(i + 1);
+        ((def.overridable || {})[key] || []).forEach(
+            pk => State.modal.cols.push({type: "override", sid: key, pk}));
+    });
+    let html = `<p style="font-size:0.85em;color:#666;margin-top:0;">
+        ${escHtml(def.description || "")}</p>
+        <table><thead><tr><th style="width:15%;">Step</th><th style="width:20%;">Action</th>
+        <th>Overridable params</th></tr></thead><tbody>`;
+
+    (def.step_ids || []).forEach((sid, i) => {
+        const key   = sid || String(i + 1);
+        const allow = (def.overridable || {})[key];
+        const step  = steps[i] || {};
+        html += `<tr><td class="cellid">${escHtml(key)}</td>
+                     <td>${escHtml(step.action || "")}</td><td>`;
+        if (!allow || !allow.length) {
+            html += `<span class="plan-locked">locked by the template</span>`;
+        } else {
+            allow.forEach(pk => {
+                const cur = (over[key] || {})[pk];
+                const inherited = (step.param || {})[pk];
+                const val = cur !== undefined ? cur : "";
+                html += `<label style="display:block;margin-bottom:4px;">
+                    <span style="font-size:0.85em;color:#555;">${escHtml(pk)}</span>
+                    <textarea data-sid="${escHtml(key)}" data-pk="${escHtml(pk)}"
+                        placeholder="${escHtml(String(inherited === undefined ? "" : inherited))}"
+                        >${escHtml(String(val))}</textarea></label>`;
+            });
+            html += `<div class="plan-inherited" style="font-size:0.75em;">
+                     empty = inherit the template's value</div>`;
+        }
+        html += `</td></tr>`;
+    });
+    body.innerHTML = html + `</tbody></table>`;
+}
+
+/* The matrix grid: rows are cells, columns are every param any cell step
+   declared overridable. This is the editable param matrix -- the 8 x 11
+   rate/bit sweep is one screen here instead of 87 hand-written steps. */
+function renderMatrixGrid() {
+    const {draft} = State.modal;
+    const def  = planDef(draft);
+    const name = refName(draft);
+    document.getElementById("plan-modal-title").textContent =
+        `Matrix — ${(def && def.label) || name}`;
+    const body = document.getElementById("plan-modal-body");
+    if (!def) {
+        body.innerHTML = `<p style="color:#b00;">Matrix <code>${escHtml(name)}</code> is not
+            defined in this container's __testplan__.py.</p>`;
+        return;
+    }
+    // A use site normally carries no "cells" of its own -- {"matrix": "...",
+    // "group": ..., "phase": ...} is all a real testlist entry has, and the
+    // 15 rows live only in the plan's own def.cells (stepplan.py's
+    // _matrix_spec: an explicit block.cells REPLACES the plan's cells, it
+    // doesn't merge with them, so falling back to def.cells here is the
+    // correct "not locally overridden yet" case, not a guess).
+    const usingPlanCells = !(draft.cells && draft.cells.length);
+    const cells = usingPlanCells ? (def.cells || []) : draft.cells;
+    // Two kinds of column, in this order:
+    //
+    //  value    - a key on the cell itself ({mode}, {rate}, {wav}, {label}...).
+    //             For a tokenised matrix this is where all the content lives:
+    //             the cell template says {rate} once and the rows supply the
+    //             numbers, so these are the columns you actually edit.
+    //  override - a (step, param) pair the cell template marked overridable,
+    //             for the cell that has to break the pattern.
+    //
+    // "title" rides along per step wherever some cell overrides it: a per-cell
+    // title is what makes a sweep readable in the report, and it is free to
+    // override by definition (FREE_STEP_KEYS in stepplan.py).
+    const MACHINERY = new Set(["id", "override", "skip"]);
+    const valueKeys = [];
+    cells.forEach(c => Object.keys(c || {}).forEach(k => {
+        if (!MACHINERY.has(k) && !valueKeys.includes(k)) valueKeys.push(k);
+    }));
+
+    const cols = valueKeys.map(k => ({type: "value", key: k}));
+    (def.step_ids || []).forEach((sid, i) => {
+        const key = sid || String(i + 1);
+        const titled = cells.some(c => ((c.override || {})[key] || {}).title !== undefined);
+        if (titled) cols.push({type: "override", sid: key, pk: "title"});
+        // pause_on is a FREE_STEP_KEY (stepplan.py) -- always overridable per
+        // cell regardless of the template's own overridable list, and it's
+        // the only way to pause a run at one specific expanded step inside a
+        // matrix, so always offer the column rather than only when already set.
+        cols.push({type: "override", sid: key, pk: "pause_on"});
+        ((def.overridable || {})[key] || []).forEach(
+            pk => cols.push({type: "override", sid: key, pk}));
+    });
+    // Remembered so applying the grid touches ONLY what the grid showed --
+    // an override the grid has no column for must survive being edited here.
+    State.modal.cols = cols;
+    if (!cols.length) {
+        body.innerHTML = `<p>This matrix's cells carry no values and its cell
+            template declares no overridable params, so every cell is
+            identical. Nothing to edit here.</p>`;
+        return;
+    }
+
+    let html = `<p style="font-size:0.85em;color:#666;margin-top:0;">
+        ${escHtml(def.description || "")}<br>
+        <span style="color:#888;">${cells.length} cells ×
+        ${def.step_count} steps. Values are substituted into the cell
+        template; override columns are empty unless that cell breaks the
+        pattern. A cell's <code>skip</code> list is shown but edited in the
+        plan file.</span>` +
+        (usingPlanCells
+            ? `<br><span style="color:#9a6a2a;">Showing the ${cells.length} cells from
+               the shared plan (this testlist has none of its own yet). Editing any
+               cell here -- e.g. setting pause_on -- saves a full local copy of all
+               ${cells.length} cells onto THIS testlist only; the shared plan and any
+               other test using this matrix are untouched.</span>`
+            : `<br><span style="color:#9a6a2a;">This testlist already carries its own
+               local copy of the cells, independent of the shared plan.</span>`) +
+        `</p>
+        <table><thead><tr><th class="cellid">cell</th><th class="cellid">skips</th>`;
+    cols.forEach(c => {
+        html += c.type === "value"
+            ? `<th><div style="font-size:0.85em;">${escHtml(c.key)}</div>
+               <div style="color:#8a63b5;font-weight:400;">value</div></th>`
+            : `<th><div style="font-size:0.85em;">${escHtml(c.sid)}</div>
+               <div style="color:#777;font-weight:400;">${escHtml(c.pk)}</div></th>`;
+    });
+    html += `</tr></thead><tbody>`;
+
+    cells.forEach((cell, ci) => {
+        html += `<tr><td class="cellid" title="${escHtml(cell.label || "")}">
+                 ${escHtml(cell.id || "cell" + (ci + 1))}</td>
+                 <td class="cellid plan-inherited">${escHtml((cell.skip || []).join(", ") || "—")}</td>`;
+        cols.forEach((c, ki) => {
+            const cur = c.type === "value"
+                ? cell[c.key]
+                : ((cell.override || {})[c.sid] || {})[c.pk];
+            html += `<td><textarea data-ci="${ci}" data-col="${ki}"
+                     >${escHtml(cur === undefined || cur === null ? "" : String(cur))}</textarea></td>`;
+        });
+        html += `</tr>`;
+    });
+    body.innerHTML = html + `</tbody></table>`;
+}
+
+/* Read the overlay's inputs back into the draft entry, then into State.steps.
+   Nothing is written to disk here -- the entry is part of the steps list, so
+   it goes out with the normal Save & Sync, through the same PUT and the same
+   writer as every other edit. */
+function applyPlanModal() {
+    if (!State.modal) return;
+    const {kind, index, draft} = State.modal;
+    const body = document.getElementById("plan-modal-body");
+
+    const cols = State.modal.cols || [];
+    if (kind === "template") {
+        const pairs = cols.map(c => [c.sid, c.pk]);
+        draft.override = mergeOverrides(draft.override, pairs,
+            collectInputs(body, "textarea[data-sid]", t => [t.dataset.sid, t.dataset.pk]));
+        if (!Object.keys(draft.override).length) delete draft.override;
+    } else {
+        const overridePairs = cols.filter(c => c.type === "override")
+                                  .map(c => [c.sid, c.pk]);
+        // The grid was rendered from the plan's cells whenever this entry had
+        // none of its own (renderMatrixGrid's usingPlanCells) -- the row
+        // data-ci indices line up with THAT list, not draft.cells, which is
+        // still empty at this point. Deep-copy it in: once anything here is
+        // applied, this testlist stops silently following the plan's cell
+        // list and carries its own, per _matrix_spec's "an explicit
+        // block.cells replaces the plan's, it doesn't merge" rule.
+        const def = planDef(draft);
+        const cells = (draft.cells && draft.cells.length)
+            ? draft.cells
+            : JSON.parse(JSON.stringify((def && def.cells) || []));
+        cells.forEach((cell, ci) => {
+            const edits = {};
+            body.querySelectorAll(`textarea[data-ci="${ci}"]`).forEach(t => {
+                const col = cols[Number(t.dataset.col)];
+                if (!col) return;
+                const v = t.value.trim();
+                if (col.type === "value") {
+                    // A value column is the cell's own key: clearing it removes
+                    // the key rather than setting it to empty string, so the
+                    // cell template's {token} falls back to unresolved and the
+                    // mistake is visible instead of silently becoming "".
+                    if (v === "") delete cell[col.key];
+                    else cell[col.key] = coercePlanValue(v);
+                    return;
+                }
+                if (v) (edits[col.sid] = edits[col.sid] || {})[col.pk] = coercePlanValue(v);
+            });
+            cell.override = mergeOverrides(cell.override, overridePairs, edits);
+            if (!Object.keys(cell.override).length) delete cell.override;
+        });
+        draft.cells = cells;
+    }
+
+    State.steps[index] = draft;
+    closePlanModal();
+    render();
+    // The expansion shown in the bands is now stale until this is saved and
+    // re-read, so say so rather than showing numbers that no longer hold.
+    const bar = document.getElementById("plan-bar-summary");
+    if (bar) bar.innerHTML += ` &nbsp;<span style="color:#c0392b;">unsaved override changes
+        — click Save &amp; Sync</span>`;
+}
+
+function collectInputs(root, selector, keyOf) {
+    const out = {};
+    root.querySelectorAll(selector).forEach(t => {
+        const [sid, pk] = keyOf(t);
+        const v = t.value.trim();
+        if (!v) return;
+        (out[sid] = out[sid] || {})[pk] = coercePlanValue(v);
+    });
+    return out;
+}
+
+/* Fold the overlay's edits into the overrides that were already there.
+
+   Only the (step, param) pairs the overlay actually RENDERED are cleared and
+   rewritten -- everything else is left alone. Rebuilding the whole override
+   block from the visible inputs would quietly delete anything the overlay has
+   no column for, which is how a matrix's per-cell titles would have been
+   thrown away the first time somebody edited one param. */
+function mergeOverrides(existing, controlledCols, edits) {
+    const out = JSON.parse(JSON.stringify(existing || {}));
+    controlledCols.forEach(([sid, pk]) => {
+        if (out[sid]) delete out[sid][pk];
+    });
+    Object.entries(edits).forEach(([sid, params]) => {
+        out[sid] = Object.assign(out[sid] || {}, params);
+    });
+    Object.keys(out).forEach(sid => {
+        if (!Object.keys(out[sid]).length) delete out[sid];
+    });
+    return out;
+}
+
+/* Inputs are text; steps carry real ints/bools. Same coercion the config
+   editor does, kept here so "30" does not become the string "30" in a param
+   whose sibling cells hold numbers. */
+function coercePlanValue(v) {
+    if (v === "true")  return true;
+    if (v === "false") return false;
+    if (/^-?\d+$/.test(v))        return parseInt(v, 10);
+    if (/^-?\d*\.\d+$/.test(v))   return parseFloat(v);
+    return v;
+}
+
+/* ── editing a template's OWN steps ──────────────────────────────────────────
+   "Edit steps" on a band points this same editor at the template's steps in
+   the container's __testplan__.py. State.steps becomes the template's list,
+   so the action picker, param table, add/move/delete and the sig check all
+   work exactly as they do for a testlist, and Save writes the plan back.
+
+   The difference from Flatten is who the edit reaches: flattening copies the
+   steps into ONE testlist and stops it following the template, while this
+   changes the template itself and therefore every test that uses it -- which
+   is why the banner names them.
+   ────────────────────────────────────────────────────────────────────────── */
+
+function nextPlanStepId() {
+    const taken = new Set(State.steps.map(s => s && s.id).filter(Boolean));
+    for (let i = 1; ; i++) {
+        const id = `s${i}`;
+        if (!taken.has(id)) return id;
+    }
+}
+
+async function editPlanSteps(index) {
+    const entry = State.steps[index];
+    if (!isPlanRef(entry)) return;
+    const kind = refKind(entry);
+    const name = refName(entry);
+    if (!State.containerId) {
+        alert("Still loading this test's container — try again in a moment.");
+        return;
+    }
+    // The plan's step BODIES are not in the per-test plan summary, only their
+    // counts and ids, so fetch the container's plan itself.
+    const r = await fetch(
+        `/api/v1/containers/${encodeURIComponent(State.containerId)}/plan`);
+    const d = await r.json();
+    if (!r.ok || !d.data) {
+        alert("Could not load the container plan: "
+              + ((d.error && d.error.message) || r.status));
+        return;
+    }
+    const plan    = d.data.plan || {};
+    const section = kind === "template" ? "templates" : "matrices";
+    const def     = (plan[section] || {})[name];
+    if (!def) {
+        alert(`${kind} "${name}" is not defined in ${d.data.file || "__testplan__.py"}.`);
+        return;
+    }
+
+    State.planEdit = {
+        container: State.containerId,
+        kind, section, id: name, def,
+        file:   d.data.file || "__testplan__.py",
+        plan,
+        usedBy: ((d.data.used_by || {})[section] || {})[name] || [],
+        returnSteps:    State.steps,
+        returnExpanded: State.expanded,
+        returnHasRefs:  State.hasReferences,
+        returnSelected: State.selectedIndex,
+        returnBands:    State.openBands
+    };
+
+    State.steps         = JSON.parse(JSON.stringify(def.steps || []));
+    State.expanded      = State.steps;
+    State.hasReferences = false;
+    State.openBands     = new Set();
+    State.selectedIndex = null;
+    renderParamTable({}, {});
+    renderStepDescription('');
+    hideDriverHint();
+    render();
+}
+
+function renderPlanEditBar() {
+    const bar = document.getElementById("plan-edit-bar");
+    if (!bar) return;
+    const saveBtn = document.querySelector('[data-testid="save-sync-btn"]');
+    const pe = State.planEdit;
+    if (!pe) {
+        bar.style.display = "none";
+        if (saveBtn) saveBtn.textContent = "Save & Sync";
+        return;
+    }
+    bar.style.display = "";
+    if (saveBtn) saveBtn.textContent = "Save template";
+
+    const users = pe.usedBy.length
+        ? `used by ${pe.usedBy.length} test${pe.usedBy.length === 1 ? "" : "s"}: `
+          + pe.usedBy.map(escHtml).join(", ")
+        : "not referenced by any test in this container";
+    const knobs = Object.keys((pe.def && pe.def.params) || {});
+    const matrixNote = pe.kind === "matrix"
+        ? `<br><span style="color:#9a6a2a;">This is the ${(pe.def.steps || []).length}-step
+           <em>cell template</em> shared by all ${(pe.def.cells || []).length || "?"} cells of
+           this matrix -- a change here applies to every cell, and every cell's copy of it is
+           numbered separately when it runs.</span>`
+        : "";
+    document.getElementById("plan-edit-summary").innerHTML =
+        `Editing ${pe.kind} <strong>${escHtml((pe.def && pe.def.label) || pe.id)}</strong> ` +
+        `(<code>${escHtml(pe.id)}</code>) in <code>${escHtml(pe.file)}</code><br>` +
+        `<span style="color:#9a6a2a;">${users}</span>` +
+        (knobs.length ? `<br><span style="color:#9a6a2a;">knobs: ${
+            knobs.map(escHtml).join(", ")}</span>` : "") + matrixNote;
+
+    const locate = document.getElementById("plan-edit-locate");
+    if (locate) locate.style.display = pe.kind === "matrix" ? "flex" : "none";
+}
+
+/* The step-matrix viewer: the one view that shows a plan-driven testlist as
+   the flat, numbered list the runner and the report actually use. Every view
+   in THIS editor is deliberately the on-disk one -- 3 entries, not 258 steps
+   -- which is right for editing but hides anything that exists per-cell, a
+   pause on step 151 above all. That lives there instead of here. */
+function openFullExpansion() {
+    const mod  = DOM.testListSel.value;
+    const test = (State.allTestData || []).find(t => t.module === mod);
+    if (!test) { alert("Pick a test first."); return; }
+    window.open(`/matrix/${encodeURIComponent(test.slug || test.module)}`, "_blank");
+}
+window.openFullExpansion = openFullExpansion;
+
+function cancelPlanEdit() {
+    const pe = State.planEdit;
+    if (!pe) return;
+    State.steps         = pe.returnSteps;
+    State.expanded      = pe.returnExpanded;
+    State.hasReferences = pe.returnHasRefs;
+    State.openBands     = pe.returnBands;
+    State.selectedIndex = null;
+    State.planEdit      = null;
+    renderParamTable({}, {});
+    renderStepDescription('');
+    render();
+}
+
+async function savePlanSteps() {
+    const pe = State.planEdit;
+    if (!pe) return;
+    updateStep();                       // fold in the step being edited
+
+    const steps = JSON.parse(JSON.stringify(State.steps));
+    steps.forEach(s => { delete s._origin; });
+
+    if (!steps.length) {
+        alert("A template needs at least one step — delete the template in "
+              + "__testplan__.py if that is what you meant.");
+        return;
+    }
+    const noAction = steps.findIndex(s => !s.action);
+    if (noAction !== -1) {
+        alert(`Step ${noAction + 1} has no action.`);
+        return;
+    }
+    const ids = steps.map(s => s.id).filter(Boolean);
+    if (new Set(ids).size !== ids.length) {
+        alert("Two steps share an id — ids are how a testlist addresses a "
+              + "step to override it, so they have to be unique.");
+        return;
+    }
+    // Dropping or adding steps shifts anything a use site addressed by
+    // position, and can orphan an override that named a step by id.
+    const before = (pe.def.steps || []).length;
+    if (steps.length !== before && pe.usedBy.length &&
+        !confirm(`This changes the template from ${before} to ${steps.length} `
+                 + `steps, for ${pe.usedBy.length} test`
+                 + `${pe.usedBy.length === 1 ? "" : "s"}: `
+                 + `${pe.usedBy.join(", ")}.\n\nOverrides that address a step `
+                 + `by position will move with it. Continue?`)) {
+        return;
+    }
+
+    const plan = JSON.parse(JSON.stringify(pe.plan));
+    plan[pe.section] = plan[pe.section] || {};
+    plan[pe.section][pe.id] = { ...(plan[pe.section][pe.id] || {}), steps };
+
+    const r = await fetch(
+        `/api/v1/containers/${encodeURIComponent(pe.container)}/plan`,
+        {method: "PUT", headers: {"Content-Type": "application/json"},
+         body: JSON.stringify({plan})});
+    const d = await r.json();
+    if (!r.ok || !d.data) {
+        alert("Save failed, nothing was written: "
+              + ((d.error && d.error.message) || r.status));
+        return;
+    }
+    State.planEdit = null;
+    updateFields();                     // reload the test with the new expansion
+    alert(`Saved to ${pe.file}.`);
+}
+
+/* ── flatten / promote ───────────────────────────────────────────────────── */
+
+async function flattenRef(index) {
+    const entry = State.steps[index];
+    const name  = refName(entry);
+    const n = expandedFor(index).length;
+    if (!confirm(
+        `Break "${name}" out into ${n} plain steps in this testlist?\n\n` +
+        `It stops tracking the container template: later edits to the ` +
+        `template will not reach this test. What the test RUNS does not ` +
+        `change -- that is checked before anything is written.`)) return;
+
+    const slug = DOM.testListSel.value;
+    const r = await fetch(`/api/v1/tests/${encodeURIComponent(slug)}/flatten`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({position: index + 1})
+    });
+    const d = await r.json();
+    if (!r.ok) { alert("Flatten failed: " + (d.error && d.error.message)); return; }
+    updateFields();
+}
+
+async function promoteRange() {
+    const from = parseInt(document.getElementById("promote-from").value, 10);
+    const to   = parseInt(document.getElementById("promote-to").value, 10);
+    const tid  = (document.getElementById("promote-id").value || "").trim();
+    if (!from || !to || !tid) {
+        alert("Fill in first entry, last entry and a template id.");
+        return;
+    }
+    if (!confirm(
+        `Move entries ${from}-${to} into this container's __testplan__.py as ` +
+        `"${tid}", and replace them here with one reference?\n\n` +
+        `Other testlists in the container can then use the same template. ` +
+        `What this test runs does not change -- that is checked before ` +
+        `anything is written.`)) return;
+
+    const slug = DOM.testListSel.value;
+    const r = await fetch(`/api/v1/tests/${encodeURIComponent(slug)}/promote`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({from, to, template_id: tid, label: tid})
+    });
+    const d = await r.json();
+    if (!r.ok) { alert("Promote failed: " + (d.error && d.error.message)); return; }
+    document.getElementById("promote-id").value = "";
+    updateFields();
+}
+
+window.toggleBand      = toggleBand;
+window.openPlanEditor  = openPlanEditor;
+window.closePlanModal  = closePlanModal;
+window.applyPlanModal  = applyPlanModal;
+window.flattenRef      = flattenRef;
+window.promoteRange    = promoteRange;
+window.editPlanSteps   = editPlanSteps;
+window.savePlanSteps   = savePlanSteps;
+window.cancelPlanEdit  = cancelPlanEdit;
+
+
 function viewTestDetail() {
     const mod = DOM.testListSel.value;
     if (!mod) return;
@@ -2006,5 +2501,56 @@ window.sendSteps = sendSteps;
 
 document.addEventListener('DOMContentLoaded', init);
 </script>
+<link rel="stylesheet" href="{{ url_for('static', filename='livebuilder.css') }}">
+<script src="{{ url_for('static', filename='livebuilder.js') }}"></script>
+
+<!-- Plan overlay: override table for a template use, grid for a matrix. Kept
+     outside #builder so it can sit over the whole editor. -->
+<div id="plan-modal" style="display:none; position:fixed; inset:0; z-index:2000;
+     background:rgba(0,0,0,0.45);">
+  <div style="position:absolute; inset:5% 4%; background:#fff; border-radius:6px;
+       display:flex; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.3);">
+    <div style="display:flex; align-items:center; gap:10px; padding:10px 14px;
+         border-bottom:1px solid #eee;">
+      <strong id="plan-modal-title" style="flex:1;"></strong>
+      <span id="plan-modal-status" style="font-size:0.8em; color:#888;"></span>
+      <button onclick="applyPlanModal()" style="background:#28a745;">Apply</button>
+      <button onclick="closePlanModal()" style="background:#6c757d;">Close</button>
+    </div>
+    <div id="plan-modal-body" style="flex:1; overflow:auto; padding:14px;"></div>
+  </div>
+</div>
+
+<style>
+.plan-band { border:1px solid #9bb4d0; border-left:5px solid #4a7fb5; border-radius:4px;
+             background:#eef3f9; padding:6px 8px; margin:4px 0 4px -50px; }
+.plan-band.matrix { border-left-color:#8a63b5; border-color:#bda8d6; background:#f3eef9; }
+.plan-band-head { display:flex; align-items:center; gap:6px; font-size:0.78em; }
+.plan-band-kind { font-weight:700; letter-spacing:0.04em; text-transform:uppercase;
+                  font-size:0.72em; color:#4a7fb5; }
+.plan-band.matrix .plan-band-kind { color:#8a63b5; }
+.plan-band-range { color:#7a8ba0; font-size:0.9em; margin-left:auto; }
+.plan-band-actions { display:flex; gap:4px; margin-top:5px; flex-wrap:wrap; }
+.plan-band-actions button { padding:2px 7px; font-size:0.72em; }
+.plan-band-steps { margin-top:6px; border-top:1px dashed #b9c9da; padding-top:5px;
+                   font-size:0.72em; color:#44566b; max-height:220px; overflow:auto; }
+.plan-band-steps div { padding:1px 0; }
+.plan-band-steps .ovr { color:#b9670a; }
+.plan-band-steps .pausetag { color:#7b3fa0; font-weight:700; }
+.plan-band-pause { margin-top:5px; padding:3px 6px; border-radius:3px;
+                   background:#f1e9f8; border:1px solid #d3bde6; color:#7b3fa0;
+                   font-size:0.72em; font-weight:700; letter-spacing:0.02em; }
+.plan-band-pause-where { font-weight:400; color:#8a6ba3; }
+.plan-locked { color:#7a8ba0; font-style:italic; }
+#plan-modal table { width:100%; border-collapse:collapse; font-size:0.8em; }
+#plan-modal th, #plan-modal td { border:1px solid #e3e3e3; padding:4px 6px; text-align:left;
+                                 vertical-align:top; }
+#plan-modal th { background:#f6f8fa; position:sticky; top:0; }
+#plan-modal textarea { width:100%; min-height:34px; font:inherit; font-size:0.95em;
+                       border:1px solid #ccc; border-radius:3px; padding:3px; }
+#plan-modal td.cellid { font-weight:600; white-space:nowrap; background:#fafbfc; }
+.plan-inherited { color:#9aa7b4; }
+</style>
+
 
 {% endblock %}

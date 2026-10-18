@@ -48,9 +48,28 @@
   .cap-section img { max-width:100%; border:1px solid #ddd; border-radius:4px; }
   .cap-section pre { background:#fafafa; border:1px solid #e2e2e2; border-radius:4px;
     padding:8px; max-height:280px; overflow:auto; font-size:0.8rem; white-space:pre-wrap; }
+  #hosts-section { border:1px solid #d8d8d8; border-radius:6px; padding:8px 10px; margin-bottom:18px;
+    display:inline-block; }
+  #hosts-section h3 { font-size:0.85rem; margin:0 0 5px; border-bottom:1px solid #eee; padding-bottom:4px; }
+  #hosts-section .sub { font-size:0.72rem; margin-bottom:6px; }
+  #hosts-table { border-collapse:collapse; font-size:0.75rem; }
+  #hosts-table th { text-align:left; color:#999; font-weight:600; font-size:0.68rem;
+    text-transform:uppercase; padding:2px 10px 3px 0; border-bottom:1px solid #eee; white-space:nowrap; }
+  #hosts-table td { padding:2px 10px 2px 0; font-family:monospace; white-space:nowrap; line-height:1.6; }
+  #hosts-table td.host { font-family:sans-serif; font-weight:600; }
 </style>
 
 <div id="ic-wrap">
+  <div id="hosts-section">
+    <div style="display:flex; justify-content:space-between; align-items:center;
+                border-bottom:1px solid #eee; padding-bottom:4px; margin-bottom:5px;">
+      <h3 style="margin:0; border:none; padding:0;">Self &amp; Friends</h3>
+      <button class="db refresh" style="padding:2px 7px; font-size:0.7rem;" onclick="loadNodes()">↻</button>
+    </div>
+    <div class="sub">Hosts sharing these NFS mounts, checked in within 30s.</div>
+    <div id="hosts-body"><em style="color:#999;">loading…</em></div>
+  </div>
+
   <h2>Live Instances</h2>
   <div class="sub">Every process the project's testrunner can currently see — VICE, QEMU, Basilisk,
     a relay server, whatever is registered — started by a test or launched by hand. Capabilities
@@ -336,7 +355,40 @@ async function detach(device, force) {
   loadMedia();
 }
 
+async function loadNodes() {
+  const el = document.getElementById("hosts-body");
+  const j = await getJSON("/api/v1/nodes");
+  if (j.error) {
+    el.innerHTML = `<span style="color:#b02a1a;">${esc(j.error.message)}</span>`;
+    return;
+  }
+  const nodes = j.data.nodes || [];
+  if (!nodes.length) {
+    el.innerHTML = '<em style="color:#999;">no hosts checked in</em>';
+    return;
+  }
+  el.innerHTML = `<table id="hosts-table"><thead><tr>
+      <th>Host</th><th>OS</th><th>Mem</th><th>CPU</th><th>Local disk free</th><th>NAS free</th><th>System clock</th>
+    </tr></thead><tbody>${nodes.map(n => {
+      // age_seconds is (this server's now) - (that host's reported timestamp),
+      // so a big magnitude either way means a clock is off somewhere -- flag it.
+      const skewed = n.age_seconds != null && Math.abs(n.age_seconds) > 10;
+      return `
+      <tr>
+        <td class="host">${esc(n.hostname)}</td>
+        <td>${esc(n.os)}</td>
+        <td>${n.mem ? esc(n.mem.percent) + "%" : "—"}</td>
+        <td>${n.cpu_percent == null ? "—" : esc(n.cpu_percent) + "%"}</td>
+        <td>${n.disk && n.disk.local ? esc(n.disk.local.free_gb) + "G" : "—"}</td>
+        <td>${n.disk && n.disk.nas ? esc(n.disk.nas.free_gb) + "G" : "—"}</td>
+        <td${skewed ? ' style="color:#b02a1a; font-weight:bold;" title="This host\'s clock disagrees with the reporting server\'s by ' + esc(n.age_seconds) + 's"' : ""}>${n.system_clock ? esc(n.system_clock) : "—"}</td>
+      </tr>`;
+    }).join("")}</tbody></table>`;
+}
+
 loadChoices().then(() => loadInstances());
+loadNodes();
 setInterval(() => loadInstances({background: true}), 5000);
+setInterval(loadNodes, 5000);
 </script>
 {% endblock %}
